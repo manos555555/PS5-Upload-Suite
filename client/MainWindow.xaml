@@ -1,0 +1,473 @@
+<Window x:Class="PS5Upload.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PS5 Upload - High-Speed File Transfer" Height="600" Width="1200"
+        WindowStartupLocation="CenterScreen"
+        Background="#1E1E1E"
+        Icon="ps5_logo.png">
+    
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#007ACC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" 
+                                CornerRadius="4" 
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#1C97EA"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#3E3E42"/>
+                    <Setter Property="Foreground" Value="#666666"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3E3E42"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+
+        <Style TargetType="ListBox">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3E3E42"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <StackPanel Grid.Row="0" Margin="0,0,0,20" Orientation="Horizontal" HorizontalAlignment="Center">
+            <Image Source="ps5_logo.png" 
+                   Width="80" 
+                   Height="80" 
+                   Margin="0,0,15,0"
+                   VerticalAlignment="Center"/>
+            <StackPanel VerticalAlignment="Center">
+                <TextBlock Text="PS5 Upload - High-Speed File Transfer" 
+                           FontSize="24" 
+                           FontWeight="Bold"
+                           Foreground="#007ACC"/>
+                <TextBlock Text="By Manos" 
+                           FontSize="12" 
+                           Foreground="#999999"
+                           Margin="0,5,0,0"/>
+            </StackPanel>
+        </StackPanel>
+
+        <!-- Connection Panel -->
+        <Border Grid.Row="1" 
+                Background="#252526" 
+                BorderBrush="#3E3E42" 
+                BorderThickness="1" 
+                CornerRadius="4" 
+                Padding="15"
+                Margin="0,0,0,15">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0" 
+                           Text="PS5 IP Address:" 
+                           VerticalAlignment="Center"
+                           Margin="0,0,10,0"/>
+                
+                <TextBox Grid.Column="1" 
+                         x:Name="IpAddressTextBox"
+                         Text="192.168.0.160"
+                         VerticalAlignment="Center"
+                         Margin="0,0,10,0"/>
+                
+                <Button Grid.Column="2" 
+                        x:Name="ConnectButton"
+                        Content="Connect"
+                        Click="ConnectButton_Click"
+                        Width="100"
+                        Margin="0,0,10,0"/>
+
+                <StackPanel Grid.Column="3" 
+                            Orientation="Horizontal" 
+                            VerticalAlignment="Center">
+                    <Ellipse x:Name="StatusIndicator" 
+                             Width="12" 
+                             Height="12" 
+                             Fill="#DC3545"
+                             Margin="0,0,8,0"/>
+                    <TextBlock x:Name="StatusText" 
+                               Text="Disconnected"
+                               Foreground="#999999"/>
+                </StackPanel>
+            </Grid>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="2">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="15"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="15"/>
+                <ColumnDefinition Width="300"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Local Files -->
+            <Border Grid.Column="0" 
+                    Background="#252526" 
+                    BorderBrush="#3E3E42" 
+                    BorderThickness="1" 
+                    CornerRadius="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" 
+                            Background="#2D2D30" 
+                            Padding="10"
+                            BorderBrush="#3E3E42"
+                            BorderThickness="0,0,0,1">
+                        <TextBlock Text="📁 Local Files" 
+                                   FontSize="16" 
+                                   FontWeight="SemiBold"/>
+                    </Border>
+
+                    <ListBox Grid.Row="1" 
+                             x:Name="LocalFilesListBox"
+                             BorderThickness="0"
+                             AllowDrop="True"
+                             Drop="LocalFilesListBox_Drop"
+                             DragEnter="LocalFilesListBox_DragEnter"
+                             MouseRightButtonUp="LocalFilesListBox_RightClick">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="5">
+                                    <TextBlock Text="{Binding Icon}" 
+                                               FontSize="16" 
+                                               Margin="0,0,10,0"/>
+                                    <TextBlock Text="{Binding Name}" 
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="🗑️ Remove" Click="RemoveLocalFile_Click"/>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                    </ListBox>
+
+                    <StackPanel Grid.Row="2" 
+                                Orientation="Horizontal" 
+                                Margin="10"
+                                HorizontalAlignment="Center">
+                        <Button Content="Browse Files" 
+                                Click="BrowseFilesButton_Click"
+                                Margin="0,0,5,0"/>
+                        <Button Content="Browse Folder" 
+                                Click="BrowseFolderButton_Click"
+                                Margin="0,0,5,0"/>
+                        <Button Content="Clear All" 
+                                Click="ClearLocalFiles_Click"
+                                Background="#DC3545"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- PS5 Files -->
+            <Border Grid.Column="2" 
+                    Background="#252526" 
+                    BorderBrush="#3E3E42" 
+                    BorderThickness="1" 
+                    CornerRadius="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" 
+                            Background="#2D2D30" 
+                            Padding="10"
+                            BorderBrush="#3E3E42"
+                            BorderThickness="0,0,0,1">
+                        <TextBlock Text="🎮 PS5 Files" 
+                                   FontSize="16" 
+                                   FontWeight="SemiBold"/>
+                    </Border>
+
+                    <StackPanel Grid.Row="1" 
+                                Orientation="Horizontal" 
+                                Margin="10"
+                                Background="#2D2D30">
+                        <TextBlock Text="Current Path:" 
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0"/>
+                        <TextBox x:Name="CurrentPathTextBox"
+                                 Text="/data"
+                                 Width="200"
+                                 VerticalAlignment="Center"
+                                 Margin="0,0,10,0"/>
+                        <Button Content="Go" 
+                                Click="GoButton_Click"
+                                Width="60"/>
+                    </StackPanel>
+
+                    <ListBox Grid.Row="2" 
+                             x:Name="PS5FilesListBox"
+                             BorderThickness="0"
+                             MouseDoubleClick="PS5FilesListBox_MouseDoubleClick">
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="📝 Rename" Click="RenameMenuItem_Click"/>
+                                <MenuItem Header="📋 Copy" Click="CopyMenuItem_Click"/>
+                                <MenuItem Header="✂️ Move" Click="MoveMenuItem_Click"/>
+                                <Separator/>
+                                <MenuItem Header="🗑️ Delete" Click="DeleteMenuItem_Click"/>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="5">
+                                    <TextBlock Text="{Binding Icon}" 
+                                               FontSize="16" 
+                                               Margin="0,0,10,0"/>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" 
+                                                   FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding SizeText}" 
+                                                   FontSize="11" 
+                                                   Foreground="#999999"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                    <StackPanel Grid.Row="3" 
+                                Margin="10">
+                        <TextBlock x:Name="StorageInfoText" 
+                                   Text="Storage: --" 
+                                   FontSize="12"
+                                   Foreground="#999999"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- Log Panel -->
+            <Border Grid.Column="4" 
+                    Background="#252526" 
+                    BorderBrush="#3E3E42" 
+                    BorderThickness="1" 
+                    CornerRadius="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" 
+                            Background="#2D2D30" 
+                            Padding="10"
+                            BorderBrush="#3E3E42"
+                            BorderThickness="0,0,0,1">
+                        <TextBlock Text="📋 Debug Log" 
+                                   FontSize="16" 
+                                   FontWeight="SemiBold"/>
+                    </Border>
+
+                    <TextBox Grid.Row="1" 
+                             x:Name="LogTextBox"
+                             Text=""
+                             FontFamily="Consolas"
+                             FontSize="11"
+                             Foreground="#CCCCCC"
+                             Background="#1E1E1E"
+                             BorderThickness="0"
+                             Padding="10"
+                             TextWrapping="Wrap"
+                             IsReadOnly="True"
+                             VerticalScrollBarVisibility="Auto"
+                             HorizontalScrollBarVisibility="Auto"/>
+
+                    <StackPanel Grid.Row="2" 
+                                Orientation="Horizontal" 
+                                Margin="10"
+                                HorizontalAlignment="Center">
+                        <Button Content="📋 Copy Log"
+                                Click="CopyLogButton_Click"
+                                Margin="0,0,10,0"
+                                Background="#28A745"/>
+                        <Button Content="Clear Log"
+                                Click="ClearLogButton_Click"
+                                Background="#3E3E42"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </Grid>
+
+        <!-- Upload Progress -->
+        <Border Grid.Row="3" 
+                Background="#252526" 
+                BorderBrush="#3E3E42" 
+                BorderThickness="1" 
+                CornerRadius="4" 
+                Padding="15"
+                Margin="0,15,0,0"
+                x:Name="ProgressPanel"
+                Visibility="Collapsed">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Files Remaining Counter -->
+                <TextBlock Grid.Row="0" 
+                           x:Name="FilesRemainingText"
+                           Text="Files: 0 / 0 (0 remaining)"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="#FFC107"
+                           Margin="0,0,0,8"/>
+
+                <!-- Total Folder Progress -->
+                <TextBlock Grid.Row="1" 
+                           x:Name="TotalProgressText"
+                           Text="Total: 0 / 0 files"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Foreground="#28A745"
+                           Margin="0,0,0,5"/>
+
+                <ProgressBar Grid.Row="2" 
+                             x:Name="TotalProgressBar"
+                             Height="20"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Foreground="#17A2B8"
+                             Background="#2D2D30"
+                             BorderBrush="#3E3E42"
+                             Margin="0,0,0,10"/>
+
+                <!-- Current File -->
+                <TextBlock Grid.Row="3" 
+                           x:Name="UploadFileNameText"
+                           Text="Uploading: filename.bin"
+                           FontSize="13"
+                           Margin="0,0,0,5"/>
+
+                <ProgressBar Grid.Row="4" 
+                             x:Name="UploadProgressBar"
+                             Height="20"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Foreground="#28A745"
+                             Background="#2D2D30"
+                             BorderBrush="#3E3E42"/>
+
+                <!-- Speed and Progress -->
+                <Grid Grid.Row="5" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" 
+                               x:Name="UploadSpeedText"
+                               Text="Speed: 0 MB/s | Avg: 0 MB/s"
+                               FontSize="12"
+                               Foreground="#999999"/>
+
+                    <TextBlock Grid.Column="1" 
+                               x:Name="UploadProgressText"
+                               Text="0 / 0 MB (0%)"
+                               FontSize="12"
+                               Foreground="#999999"/>
+                </Grid>
+
+                <!-- ETA -->
+                <TextBlock Grid.Row="6" 
+                           x:Name="UploadETAText"
+                           Text="ETA: Calculating..."
+                           FontSize="12"
+                           Foreground="#999999"
+                           Margin="0,5,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- Upload Buttons -->
+        <Grid Grid.Row="4" Margin="0,15,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="150"/>
+            </Grid.ColumnDefinitions>
+            
+            <Button Grid.Column="0"
+                    x:Name="UploadButton"
+                    Content="⬆️ Upload to PS5"
+                    Click="UploadButton_Click"
+                    Height="45"
+                    FontSize="16"
+                    FontWeight="SemiBold"
+                    IsEnabled="False"/>
+            
+            <Button Grid.Column="2"
+                    x:Name="CancelButton"
+                    Content="❌ Cancel"
+                    Click="CancelButton_Click"
+                    Height="45"
+                    FontSize="16"
+                    FontWeight="SemiBold"
+                    Background="#DC3545"
+                    IsEnabled="False"/>
+        </Grid>
+    </Grid>
+</Window>
