@@ -1,0 +1,79 @@
+<Window x:Class="PS5Upload.DuplicateFileDialog"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="File Already Exists" 
+        Height="250" 
+        Width="500"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize"
+        Background="#1E1E1E">
+    
+    <Window.Resources>
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3F3F46"/>
+            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="Margin" Value="5"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#3E3E42"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+    </Window.Resources>
+    
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+        
+        <!-- Icon and Message -->
+        <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,15">
+            <TextBlock Text="⚠️" FontSize="32" Margin="0,0,15,0"/>
+            <TextBlock x:Name="MessageTextBlock" 
+                       Text="This file already exists on PS5:"
+                       Foreground="White"
+                       FontSize="14"
+                       VerticalAlignment="Center"/>
+        </StackPanel>
+        
+        <!-- File Name -->
+        <TextBlock Grid.Row="1" 
+                   x:Name="FileNameTextBlock"
+                   Foreground="#4EC9B0"
+                   FontSize="13"
+                   FontWeight="Bold"
+                   Margin="0,0,0,10"
+                   TextWrapping="Wrap"/>
+        
+        <!-- File Info -->
+        <StackPanel Grid.Row="2" Margin="0,0,0,20">
+            <TextBlock x:Name="LocalSizeTextBlock" 
+                       Foreground="#9CDCFE"
+                       FontSize="12"
+                       Margin="0,0,0,5"/>
+            <TextBlock x:Name="RemoteSizeTextBlock" 
+                       Foreground="#9CDCFE"
+                       FontSize="12"/>
+        </StackPanel>
+        
+        <!-- Buttons -->
+        <StackPanel Grid.Row="4" Orientation="Vertical">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Margin="0,0,0,10">
+                <Button Content="Replace" Width="120" Click="Replace_Click"/>
+                <Button Content="Skip" Width="120" Click="Skip_Click"/>
+            </StackPanel>
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Button Content="Replace All" Width="120" Click="ReplaceAll_Click"/>
+                <Button Content="Skip All" Width="120" Click="SkipAll_Click"/>
+            </StackPanel>
+        </StackPanel>
+    </Grid>
+</Window>

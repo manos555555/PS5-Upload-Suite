@@ -46,6 +46,10 @@ namespace PS5Upload
         // Log throttling to prevent UI freeze
         private int _logCounter = 0;
         private const int MaxLogLines = 1000;
+        
+        // Duplicate file handling
+        private enum DuplicateAction { Ask, Replace, Skip, ReplaceAll, SkipAll }
+        private DuplicateAction _duplicateAction = DuplicateAction.Ask;
 
         public MainWindow()
         {
@@ -506,6 +510,21 @@ namespace PS5Upload
                     allFiles.Add((item.FullPath, _currentPS5Path + "/" + item.Name));
                 }
             }
+            
+            // Check for duplicates and filter files
+            Log("Checking for existing files...");
+            var filesToUpload = await FilterDuplicateFilesAsync(allFiles);
+            if (filesToUpload.Count == 0)
+            {
+                Log("⚠️ No files to upload (all skipped)");
+                MessageBox.Show("No files to upload. All files were skipped.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                UploadButton.IsEnabled = true;
+                CancelButton.IsEnabled = false;
+                ProgressPanel.Visibility = Visibility.Collapsed;
+                return;
+            }
+            
+            allFiles = filesToUpload;
 
             _totalFilesToUpload = allFiles.Count;
             _totalBytesToUpload = allFiles.Sum(f => new FileInfo(f.localPath).Length);
@@ -1616,6 +1635,100 @@ namespace PS5Upload
                 len = len / 1024;
             }
             return $"{len:0.##} {sizes[order]}";
+        }
+
+        private async Task<List<(string localPath, string remotePath)>> FilterDuplicateFilesAsync(List<(string localPath, string remotePath)> allFiles)
+        {
+            var filesToUpload = new List<(string localPath, string remotePath)>();
+            _duplicateAction = DuplicateAction.Ask; // Reset for each upload session
+            
+            // Group files by directory to minimize ListDir calls
+            var filesByDir = allFiles.GroupBy(f => Path.GetDirectoryName(f.remotePath)?.Replace("\\", "/") ?? "");
+            
+            foreach (var dirGroup in filesByDir)
+            {
+                string remoteDir = dirGroup.Key;
+                
+                // Get existing files in this directory
+                Dictionary<string, long> existingFiles;
+                try
+                {
+                    var entries = await _protocol.ListDirAsync(remoteDir);
+                    existingFiles = entries
+                        .Where(e => !e.IsDirectory)
+                        .ToDictionary(e => e.Name, e => e.Size);
+                }
+                catch
+                {
+                    // Directory doesn't exist or error - all files are new
+                    filesToUpload.AddRange(dirGroup);
+                    continue;
+                }
+                
+                // Check each file in this directory
+                foreach (var file in dirGroup)
+                {
+                    string fileName = Path.GetFileName(file.remotePath);
+                    
+                    if (existingFiles.ContainsKey(fileName))
+                    {
+                        // File exists - check what to do
+                        if (_duplicateAction == DuplicateAction.ReplaceAll)
+                        {
+                            filesToUpload.Add(file);
+                            continue;
+                        }
+                        else if (_duplicateAction == DuplicateAction.SkipAll)
+                        {
+                            Log($"⏭️ Skipping existing file: {fileName}");
+                            continue;
+                        }
+                        else if (_duplicateAction == DuplicateAction.Ask)
+                        {
+                            // Show dialog
+                            long localSize = new FileInfo(file.localPath).Length;
+                            long remoteSize = existingFiles[fileName];
+                            
+                            var dialog = new DuplicateFileDialog(fileName, localSize, remoteSize);
+                            dialog.Owner = this;
+                            
+                            bool? result = dialog.ShowDialog();
+                            if (result == true)
+                            {
+                                switch (dialog.UserAction)
+                                {
+                                    case DuplicateFileDialog.FileAction.Replace:
+                                        filesToUpload.Add(file);
+                                        break;
+                                    case DuplicateFileDialog.FileAction.Skip:
+                                        Log($"⏭️ Skipping: {fileName}");
+                                        break;
+                                    case DuplicateFileDialog.FileAction.ReplaceAll:
+                                        _duplicateAction = DuplicateAction.ReplaceAll;
+                                        filesToUpload.Add(file);
+                                        break;
+                                    case DuplicateFileDialog.FileAction.SkipAll:
+                                        _duplicateAction = DuplicateAction.SkipAll;
+                                        Log($"⏭️ Skipping all existing files");
+                                        break;
+                                }
+                            }
+                            else
+                            {
+                                // Dialog cancelled - skip this file
+                                Log($"⏭️ Skipping: {fileName}");
+                            }
+                        }
+                    }
+                    else
+                    {
+                        // File doesn't exist - add to upload list
+                        filesToUpload.Add(file);
+                    }
+                }
+            }
+            
+            return filesToUpload;
         }
     }
 
