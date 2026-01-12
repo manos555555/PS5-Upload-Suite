@@ -1139,10 +1139,11 @@ int main() {
         
         // NOTE: Removed TCP_NOPUSH - it was causing buffering delays!
         
-        // CRITICAL: Set very long timeout to prevent drops on large files
-        // Large files (15GB) can take minutes to upload
+        // CRITICAL: Unlimited timeout for files of ANY size
+        // Keepalive will detect and close dead connections (~25s)
+        // This allows 50GB+ files to upload without timeout issues
         struct timeval tv;
-        tv.tv_sec = 300;  // 5 minutes timeout
+        tv.tv_sec = 0;  // 0 = unlimited timeout
         tv.tv_usec = 0;
         setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
         setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
