@@ -415,12 +415,59 @@ void handle_delete_file(client_session_t *session, const char *path) {
     }
 }
 
-// Handle DELETE_DIR
-void handle_delete_dir(client_session_t *session, const char *path) {
-    if (rmdir_recursive(path) == 0) {
-        send_ok(session->sock, "Directory deleted");
+// Background deletion thread data
+typedef struct {
+    char path[MAX_PATH];
+} delete_thread_data_t;
+
+// Background deletion thread
+void* delete_thread_func(void* arg) {
+    delete_thread_data_t* data = (delete_thread_data_t*)arg;
+    
+    // Perform deletion in background
+    int result = rmdir_recursive(data->path);
+    
+    // Send notification when done
+    if (result == 0) {
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Folder deleted: %s", data->path);
+        send_notification(msg);
     } else {
-        send_error(session->sock, "Failed to delete directory");
+        char msg[256];
+        snprintf(msg, sizeof(msg), "Failed to delete: %s", data->path);
+        send_notification(msg);
+    }
+    
+    free(data);
+    return NULL;
+}
+
+// Handle DELETE_DIR - BUG FIX: Async deletion to prevent timeout
+void handle_delete_dir(client_session_t *session, const char *path) {
+    // Send OK response immediately to prevent timeout
+    send_ok(session->sock, "Deleting folder in background...");
+    
+    // Create background thread for deletion
+    delete_thread_data_t* data = malloc(sizeof(delete_thread_data_t));
+    if (data) {
+        strncpy(data->path, path, MAX_PATH - 1);
+        data->path[MAX_PATH - 1] = '\0';
+        
+        pthread_t thread;
+        pthread_attr_t attr;
+        pthread_attr_init(&attr);
+        pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+        
+        if (pthread_create(&thread, &attr, delete_thread_func, data) != 0) {
+            // Thread creation failed, delete synchronously
+            free(data);
+            rmdir_recursive(path);
+        }
+        
+        pthread_attr_destroy(&attr);
+    } else {
+        // Malloc failed, delete synchronously
+        rmdir_recursive(path);
     }
 }
 

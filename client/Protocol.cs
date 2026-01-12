@@ -53,12 +53,31 @@ namespace PS5Upload
                 _client.NoDelay = true;
                 _client.LingerState = new System.Net.Sockets.LingerOption(false, 0);
 
-                await _client.ConnectAsync(ipAddress, port);
+                // BUG FIX #1: Add 5 second timeout for connection to fail fast on wrong IP
+                var connectTask = _client.ConnectAsync(ipAddress, port);
+                var timeoutTask = Task.Delay(5000); // 5 second timeout
+                
+                var completedTask = await Task.WhenAny(connectTask, timeoutTask);
+                
+                if (completedTask == timeoutTask)
+                {
+                    // Timeout occurred
+                    _client?.Close();
+                    return false;
+                }
+                
+                // Check if connection actually succeeded
+                if (!_client.Connected)
+                {
+                    return false;
+                }
+                
                 _stream = _client.GetStream();
                 return true;
             }
             catch
             {
+                _client?.Close();
                 return false;
             }
         }
@@ -238,7 +257,20 @@ namespace PS5Upload
         {
             byte[] pathBytes = Encoding.UTF8.GetBytes(path + "\0");
             await SendCommandAsync(Command.DeleteDir, pathBytes);
-            var (response, _) = await ReceiveResponseAsync();
+            
+            // BUG FIX #2: Add 60 second timeout for folder deletion (large folders take time)
+            var responseTask = ReceiveResponseAsync();
+            var timeoutTask = Task.Delay(60000); // 60 second timeout for folder deletion
+            
+            var completedTask = await Task.WhenAny(responseTask, timeoutTask);
+            
+            if (completedTask == timeoutTask)
+            {
+                // Timeout - but folder might still be deleting on PS5
+                throw new TimeoutException("Folder deletion timed out after 60 seconds. Large folders may take longer.");
+            }
+            
+            var (response, _) = await responseTask;
             return response == Response.Ok;
         }
 
