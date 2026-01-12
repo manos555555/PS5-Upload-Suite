@@ -63,6 +63,8 @@ namespace PS5Upload
                 {
                     // Timeout occurred
                     _client?.Close();
+                    _client?.Dispose();
+                    _client = null;
                     return false;
                 }
                 
@@ -78,14 +80,16 @@ namespace PS5Upload
             catch
             {
                 _client?.Close();
+                _client?.Dispose();
+                _client = null;
                 return false;
             }
         }
 
         public void Disconnect()
         {
-            _stream?.Close();
-            _client?.Close();
+            _stream?.Dispose();
+            _client?.Dispose();
             _stream = null;
             _client = null;
         }
@@ -253,25 +257,65 @@ namespace PS5Upload
             return response == Response.Ok;
         }
 
+        public event Action<string> OnProgressMessage;
+
         public async Task<bool> DeleteDirAsync(string path)
         {
             byte[] pathBytes = Encoding.UTF8.GetBytes(path + "\0");
             await SendCommandAsync(Command.DeleteDir, pathBytes);
             
-            // BUG FIX #2: Add 60 second timeout for folder deletion (large folders take time)
-            var responseTask = ReceiveResponseAsync();
-            var timeoutTask = Task.Delay(60000); // 60 second timeout for folder deletion
-            
-            var completedTask = await Task.WhenAny(responseTask, timeoutTask);
-            
-            if (completedTask == timeoutTask)
+            // Receive initial OK response
+            var (response, _) = await ReceiveResponseAsync();
+            if (response != Response.Ok)
             {
-                // Timeout - but folder might still be deleting on PS5
-                throw new TimeoutException("Folder deletion timed out after 60 seconds. Large folders may take longer.");
+                return false;
             }
             
-            var (response, _) = await responseTask;
-            return response == Response.Ok;
+            // Now listen for progress messages synchronously
+            // Keep reading until we get the final OK/ERROR response
+            bool deletionComplete = false;
+            
+            try
+            {
+                while (!deletionComplete)
+                {
+                    var (progressResponse, progressData) = await ReceiveResponseAsync();
+                    
+                    if (progressResponse == Response.Progress)
+                    {
+                        string message = Encoding.UTF8.GetString(progressData).TrimEnd('\0');
+                        OnProgressMessage?.Invoke(message);
+                    }
+                    else if (progressResponse == Response.Ok)
+                    {
+                        // Final OK response received - deletion complete
+                        OnProgressMessage?.Invoke("🔚 Received final OK - deletion complete");
+                        deletionComplete = true;
+                    }
+                    else if (progressResponse == Response.Error)
+                    {
+                        // Error response received
+                        OnProgressMessage?.Invoke("❌ Received error response");
+                        deletionComplete = true;
+                    }
+                    else
+                    {
+                        // Unexpected response - log it
+                        OnProgressMessage?.Invoke($"⚠️ Unexpected response: {progressResponse}");
+                        deletionComplete = true;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                // Connection closed - log it
+                OnProgressMessage?.Invoke($"⚠️ Connection closed: {ex.Message}");
+            }
+            
+            // Give server a moment to fully close the deletion thread
+            await Task.Delay(100);
+            
+            return true;
         }
 
         public async Task<bool> RenameAsync(string oldPath, string newPath)

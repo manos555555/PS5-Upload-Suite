@@ -42,6 +42,10 @@ namespace PS5Upload
         // Real-time UI update timer
         private DispatcherTimer _uiUpdateTimer;
         private int _activeTaskCount = 0;
+        
+        // Log throttling to prevent UI freeze
+        private int _logCounter = 0;
+        private const int MaxLogLines = 1000;
 
         public MainWindow()
         {
@@ -53,6 +57,12 @@ namespace PS5Upload
             _uiUpdateTimer = new DispatcherTimer();
             _uiUpdateTimer.Interval = TimeSpan.FromMilliseconds(500);
             _uiUpdateTimer.Tick += UiUpdateTimer_Tick;
+            
+            // Subscribe to progress messages from protocol
+            _protocol.OnProgressMessage += (message) =>
+            {
+                Dispatcher.Invoke(() => Log(message));
+            };
             
             Log("Application started");
         }
@@ -106,7 +116,9 @@ namespace PS5Upload
 
         private void UpdateUploadStats(int completedFiles, int activeTaskCount)
         {
-            Dispatcher.Invoke(() =>
+            // CRITICAL FIX: Use InvokeAsync instead of Invoke to prevent UI freezing
+            // When uploading thousands of small files, Invoke blocks the UI thread
+            Dispatcher.InvokeAsync(() =>
             {
                 // Update files remaining counter
                 int remainingFiles = _totalFilesToUpload - completedFiles;
@@ -147,17 +159,50 @@ namespace PS5Upload
                 {
                     UploadFileNameText.Text = $"Uploading {activeTaskCount} files in parallel...";
                 }
-            });
+            }, System.Windows.Threading.DispatcherPriority.Background);
         }
 
         private void Log(string message)
         {
-            Dispatcher.Invoke(() =>
+            // CRITICAL FIX: Use InvokeAsync and throttle logging to prevent UI freeze
+            // Only log important events (file completions, errors, status changes)
+            // Skip verbose progress updates that flood the log
+            
+            // Skip verbose upload progress messages
+            if (message.Contains("📊") || message.Contains("⬆️ Uploading:") || 
+                message.Contains("⏳ Waiting") || message.Contains("✅ Task completed") ||
+                message.Contains("✅ Task awaited") || message.Contains("🔍 Task index") ||
+                message.Contains("🧹 Cleaning up") || message.Contains("📤 Starting upload") ||
+                message.Contains("✅ Connection") && message.Contains("established"))
+            {
+                _logCounter++;
+                // Only log every 50th verbose message to show activity
+                if (_logCounter % 50 != 0)
+                    return;
+            }
+            
+            Dispatcher.InvokeAsync(() =>
             {
                 string timestamp = DateTime.Now.ToString("HH:mm:ss.fff");
+                
+                // Limit log size to prevent memory issues and UI slowdown
+                int lineCount = LogTextBox.LineCount;
+                if (lineCount > MaxLogLines)
+                {
+                    // Remove first 200 lines when limit is reached
+                    int firstLineLength = LogTextBox.GetLineLength(0);
+                    int linesToRemove = 200;
+                    int charsToRemove = 0;
+                    for (int i = 0; i < linesToRemove && i < lineCount; i++)
+                    {
+                        charsToRemove += LogTextBox.GetLineLength(i);
+                    }
+                    LogTextBox.Text = LogTextBox.Text.Substring(charsToRemove);
+                }
+                
                 LogTextBox.AppendText($"[{timestamp}] {message}\n");
                 LogTextBox.ScrollToEnd();
-            });
+            }, System.Windows.Threading.DispatcherPriority.Background);
         }
 
         private async void ConnectButton_Click(object sender, RoutedEventArgs e)
@@ -563,23 +608,15 @@ namespace PS5Upload
                         var (localPath, remotePath) = fileQueue.Dequeue();
                         FileInfo fileInfo = new FileInfo(localPath);
                         
-                        // For large files (>100MB), use chunked parallel upload for maximum speed
-                        const long ChunkThreshold = 100L * 1024L * 1024L; // 100MB - chunk earlier for better speed
-                        const long VeryLargeThreshold = 10L * 1024L * 1024L * 1024L; // 10GB
-                        const long MediumThreshold = 1024L * 1024L * 1024L; // 1GB
-                        if (fileInfo.Length > ChunkThreshold)
+                        // CRITICAL: Chunking disabled for maximum stability
+                        // PS5 cannot handle concurrent writes to same file even with mutex
+                        // 6 parallel single-connection uploads = full gigabit speed + zero errors
+                        if (false) // Chunking permanently disabled
                         {
-                            // Adaptive chunk count based on file size:
-                            // >10GB: 8 chunks (maximum parallelism with fire-and-forget)
-                            // 1-10GB: 8 chunks (maximum parallelism)
-                            // 100MB-1GB: 6 chunks (aggressive parallelism)
-                            int chunkCount;
-                            if (fileInfo.Length > VeryLargeThreshold)
-                                chunkCount = 8; // Maximum parallelism for huge files
-                            else if (fileInfo.Length > MediumThreshold)
-                                chunkCount = 8; // Maximum parallelism for large files
-                            else
-                                chunkCount = 6; // Aggressive parallelism for medium files
+                            // CRITICAL: Use only 2 chunks for maximum PS5 stability
+                            // Multiple threads waiting on the same file mutex causes connection drops
+                            // 2 chunks provides good speed while maintaining stability
+                            int chunkCount = 2;
                             
                             // Split file into chunks for parallel upload
                             long chunkSize = fileInfo.Length / chunkCount;
@@ -683,31 +720,34 @@ namespace PS5Upload
                         int taskIndex = activeTasks.IndexOf(completedTask);
                         Log($"🔍 Task index: {taskIndex} (Total tasks: {activeTasks.Count}, Connections: {activeConnections.Count})");
                         
+                        // CRITICAL FIX: Always remove task and update file progress, even if index mismatch
+                        // Get the file path for this task
+                        string filePath = null;
+                        if (taskToFilePath.TryGetValue(completedTask, out filePath))
+                        {
+                            // Increment completed chunks for this file
+                            lock (_progressLock)
+                            {
+                                fileChunksCompleted[filePath]++;
+                                
+                                // Check if all chunks for this file are complete
+                                if (fileChunksCompleted[filePath] >= fileChunkCounts[filePath] && !completedFiles.Contains(filePath))
+                                {
+                                    completedFiles.Add(filePath);
+                                    _completedFiles++;
+                                    Log($"✅ File {_completedFiles}/{_totalFilesToUpload} completed");
+                                }
+                            }
+                            taskToFilePath.Remove(completedTask);
+                        }
+                        
+                        // Remove task from list
+                        activeTasks.Remove(completedTask);
+                        
+                        // Try to cleanup connection if index is valid
                         if (taskIndex >= 0 && taskIndex < activeConnections.Count)
                         {
-                            Log($"🧹 Cleaning up task {taskIndex}");
-                            
-                            // Get the file path for this task
-                            string filePath = null;
-                            if (taskToFilePath.TryGetValue(completedTask, out filePath))
-                            {
-                                // Increment completed chunks for this file
-                                lock (_progressLock)
-                                {
-                                    fileChunksCompleted[filePath]++;
-                                    
-                                    // Check if all chunks for this file are complete
-                                    if (fileChunksCompleted[filePath] >= fileChunkCounts[filePath] && !completedFiles.Contains(filePath))
-                                    {
-                                        completedFiles.Add(filePath);
-                                        _completedFiles++;
-                                        Log($"✅ File {_completedFiles}/{_totalFilesToUpload} completed");
-                                    }
-                                }
-                                taskToFilePath.Remove(completedTask);
-                            }
-                            
-                            activeTasks.RemoveAt(taskIndex);
+                            Log($"🧹 Cleaning up connection at index {taskIndex}");
                             var completedConn = activeConnections[taskIndex];
                             activeConnections.RemoveAt(taskIndex);
                             
@@ -721,9 +761,7 @@ namespace PS5Upload
                         }
                         else
                         {
-                            Log($"⚠️ Task index mismatch - removing task anyway");
-                            // Task not found - remove it anyway
-                            activeTasks.Remove(completedTask);
+                            Log($"⚠️ Connection index mismatch ({taskIndex} vs {activeConnections.Count}) - task removed, connection cleanup skipped");
                         }
                         
                         // Update active task count for real-time UI updates
@@ -1545,7 +1583,12 @@ namespace PS5Upload
                     {
                         if (item.IsDirectory)
                         {
+                            Log($"🗑️ Deleting folder: {item.Name}");
                             await _protocol.DeleteDirAsync(item.FullPath);
+                            Log($"✅ Folder deletion complete: {item.Name}");
+                            
+                            // Wait a moment before reloading to ensure server is ready
+                            await Task.Delay(500);
                         }
                         else
                         {
@@ -1556,6 +1599,7 @@ namespace PS5Upload
                     catch (Exception ex)
                     {
                         MessageBox.Show($"Delete failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                        Log($"❌ Delete failed: {ex.Message}");
                     }
                 }
             }

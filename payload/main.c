@@ -27,6 +27,73 @@
 #define DISK_WORKER_COUNT 4
 #define QUEUE_MAX_SIZE 32
 
+// Per-file mutex hash map to prevent corruption during parallel uploads to SAME file
+// Different files can write in parallel without blocking each other
+typedef struct file_mutex_entry {
+    char path[MAX_PATH];
+    pthread_mutex_t mutex;
+    int ref_count;
+    struct file_mutex_entry *next;
+} file_mutex_entry_t;
+
+static file_mutex_entry_t *g_file_mutexes = NULL;
+static pthread_mutex_t g_mutex_map_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Get or create mutex for a specific file path
+pthread_mutex_t* get_file_mutex(const char *path) {
+    pthread_mutex_lock(&g_mutex_map_lock);
+    
+    // Search for existing mutex
+    file_mutex_entry_t *entry = g_file_mutexes;
+    while (entry) {
+        if (strcmp(entry->path, path) == 0) {
+            entry->ref_count++;
+            pthread_mutex_unlock(&g_mutex_map_lock);
+            return &entry->mutex;
+        }
+        entry = entry->next;
+    }
+    
+    // Create new mutex for this file
+    entry = (file_mutex_entry_t*)malloc(sizeof(file_mutex_entry_t));
+    if (!entry) {
+        pthread_mutex_unlock(&g_mutex_map_lock);
+        return NULL;
+    }
+    
+    strncpy(entry->path, path, sizeof(entry->path) - 1);
+    entry->path[sizeof(entry->path) - 1] = '\0';
+    pthread_mutex_init(&entry->mutex, NULL);
+    entry->ref_count = 1;
+    entry->next = g_file_mutexes;
+    g_file_mutexes = entry;
+    
+    pthread_mutex_unlock(&g_mutex_map_lock);
+    return &entry->mutex;
+}
+
+// Release mutex reference
+void release_file_mutex(const char *path) {
+    pthread_mutex_lock(&g_mutex_map_lock);
+    
+    file_mutex_entry_t **ptr = &g_file_mutexes;
+    while (*ptr) {
+        if (strcmp((*ptr)->path, path) == 0) {
+            (*ptr)->ref_count--;
+            if ((*ptr)->ref_count == 0) {
+                file_mutex_entry_t *to_free = *ptr;
+                *ptr = (*ptr)->next;
+                pthread_mutex_destroy(&to_free->mutex);
+                free(to_free);
+            }
+            break;
+        }
+        ptr = &(*ptr)->next;
+    }
+    
+    pthread_mutex_unlock(&g_mutex_map_lock);
+}
+
 // Protocol commands
 #define CMD_PING 0x01
 #define CMD_LIST_STORAGE 0x02
@@ -66,6 +133,7 @@ void send_notification(const char *msg) {
 typedef struct {
     int sock;
     FILE *upload_fp;
+    pthread_mutex_t *file_mutex;  // Per-file mutex
     char upload_path[MAX_PATH];
     uint64_t upload_size;
     uint64_t upload_received;
@@ -244,7 +312,74 @@ int mkdir_recursive(const char *path) {
     return 0;
 }
 
-// Recursive directory deletion
+// Global deletion progress counter
+static int g_delete_count = 0;
+static int g_total_files = 0;
+static time_t g_last_notify = 0;
+static int g_client_sock = 0;
+
+// Forward declaration
+void send_progress_message(const char *msg);
+
+// Global scan counter for progress updates (reset before each scan)
+static int g_scan_count = 0;
+static time_t g_last_scan_notify = 0;
+
+// Count files in directory recursively with progress updates
+int count_files_recursive(const char *path) {
+    DIR *dir = opendir(path);
+    if (!dir) {
+        return 0;
+    }
+
+    int count = 0;
+    struct dirent *entry;
+    char child[MAX_PATH];
+    
+    while ((entry = readdir(dir)) != NULL) {
+        if (strcmp(entry->d_name, ".") == 0 || strcmp(entry->d_name, "..") == 0) {
+            continue;
+        }
+        snprintf(child, sizeof(child), "%s/%s", path, entry->d_name);
+
+        struct stat st;
+        if (stat(child, &st) != 0) {
+            continue;
+        }
+        if (S_ISDIR(st.st_mode)) {
+            count++;  // Count the directory itself
+            count += count_files_recursive(child);  // Count its contents
+        } else {
+            count++;
+            g_scan_count++;
+            
+            // Send progress every 500 files or every 3 seconds during counting
+            time_t now = time(NULL);
+            if (g_scan_count % 500 == 0 || (now - g_last_scan_notify) >= 3) {
+                char msg[256];
+                snprintf(msg, sizeof(msg), "📊 Scanning... found %d files so far", g_scan_count);
+                send_progress_message(msg);
+                g_last_scan_notify = now;
+            }
+        }
+    }
+    closedir(dir);
+    return count;
+}
+
+// Send progress message to client
+void send_progress_message(const char *msg) {
+    if (g_client_sock > 0) {
+        uint8_t header[5];
+        header[0] = RESP_PROGRESS;
+        uint32_t len = strlen(msg) + 1;
+        memcpy(header + 1, &len, 4);
+        send(g_client_sock, header, 5, 0);
+        send(g_client_sock, msg, len, 0);
+    }
+}
+
+// Recursive directory deletion with progress reporting
 int rmdir_recursive(const char *path) {
     DIR *dir = opendir(path);
     if (!dir) {
@@ -267,6 +402,18 @@ int rmdir_recursive(const char *path) {
             rmdir_recursive(child);
         } else {
             unlink(child);
+            g_delete_count++;
+            
+            // Send progress every 50 files or every 2 seconds
+            time_t now = time(NULL);
+            if (g_delete_count % 50 == 0 || (now - g_last_notify) >= 2) {
+                int percentage = (g_total_files > 0) ? (g_delete_count * 100 / g_total_files) : 0;
+                char msg[256];
+                snprintf(msg, sizeof(msg), "🗑️ Deleting... %d/%d files (%d%%)", 
+                         g_delete_count, g_total_files, percentage);
+                send_progress_message(msg);
+                g_last_notify = now;
+            }
         }
     }
     closedir(dir);
@@ -418,26 +565,91 @@ void handle_delete_file(client_session_t *session, const char *path) {
 // Background deletion thread data
 typedef struct {
     char path[MAX_PATH];
+    int client_sock;
 } delete_thread_data_t;
 
 // Background deletion thread
 void* delete_thread_func(void* arg) {
     delete_thread_data_t* data = (delete_thread_data_t*)arg;
     
+    // Reset ALL progress counters
+    g_delete_count = 0;
+    g_scan_count = 0;
+    g_last_notify = time(NULL);
+    g_last_scan_notify = time(NULL);
+    g_client_sock = data->client_sock;
+    
+    // Count total files first
+    char start_msg[256];
+    snprintf(start_msg, sizeof(start_msg), "📊 Scanning folder: %s", data->path);
+    send_progress_message(start_msg);
+    
+    g_total_files = count_files_recursive(data->path);
+    
+    if (g_total_files == 0) {
+        char empty_msg[256];
+        snprintf(empty_msg, sizeof(empty_msg), "⚠️ Folder is empty or already deleted");
+        send_progress_message(empty_msg);
+        g_client_sock = 0;
+        free(data);
+        return NULL;
+    }
+    
+    char count_msg[256];
+    snprintf(count_msg, sizeof(count_msg), "📊 Total: %d files to delete", g_total_files);
+    send_progress_message(count_msg);
+    
+    // Start deletion
+    char del_msg[256];
+    snprintf(del_msg, sizeof(del_msg), "🗑️ Starting deletion...");
+    send_progress_message(del_msg);
+    
     // Perform deletion in background
     int result = rmdir_recursive(data->path);
     
-    // Send notification when done
+    // Send completion message
     if (result == 0) {
         char msg[256];
-        snprintf(msg, sizeof(msg), "Folder deleted: %s", data->path);
+        snprintf(msg, sizeof(msg), "✅ Deleted %d files (100%%)", g_delete_count);
+        send_progress_message(msg);
         send_notification(msg);
+        
+        // Send final OK response to signal completion
+        if (g_client_sock > 0) {
+            uint8_t header[5];
+            header[0] = RESP_OK;
+            uint32_t len = 0;
+            memcpy(header + 1, &len, 4);
+            send(g_client_sock, header, 5, 0);
+            
+            // Force flush and wait for data to be sent
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 200000000; // 200ms
+            nanosleep(&ts, NULL);
+        }
     } else {
         char msg[256];
-        snprintf(msg, sizeof(msg), "Failed to delete: %s", data->path);
-        send_notification(msg);
+        snprintf(msg, sizeof(msg), "❌ Failed to delete folder (%d files removed)", g_delete_count);
+        send_progress_message(msg);
+        
+        // Send error response
+        if (g_client_sock > 0) {
+            uint8_t header[5];
+            header[0] = RESP_ERROR;
+            uint32_t len = 0;
+            memcpy(header + 1, &len, 4);
+            send(g_client_sock, header, 5, 0);
+            
+            // Force flush and wait for data to be sent
+            struct timespec ts;
+            ts.tv_sec = 0;
+            ts.tv_nsec = 200000000; // 200ms
+            nanosleep(&ts, NULL);
+        }
     }
     
+    g_client_sock = 0;
     free(data);
     return NULL;
 }
@@ -452,6 +664,7 @@ void handle_delete_dir(client_session_t *session, const char *path) {
     if (data) {
         strncpy(data->path, path, MAX_PATH - 1);
         data->path[MAX_PATH - 1] = '\0';
+        data->client_sock = session->sock;
         
         pthread_t thread;
         pthread_attr_t attr;
@@ -562,6 +775,11 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     if (session->upload_fp) {
         fclose(session->upload_fp);
         session->upload_fp = NULL;
+        // Release previous file mutex to prevent leak
+        if (session->file_mutex) {
+            release_file_mutex(session->upload_path);
+            session->file_mutex = NULL;
+        }
     }
     
     // Parse path, size, and optional offset
@@ -591,7 +809,18 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
         mkdir_recursive(parent);
     }
     
-    // Open file for writing (r+b for chunk mode, wb for normal)
+    // Get per-file mutex for this specific file
+    session->file_mutex = get_file_mutex(path);
+    if (!session->file_mutex) {
+        send_error(session->sock, "Cannot allocate file mutex");
+        return;
+    }
+    
+    // CRITICAL: Lock mutex BEFORE opening file to prevent race condition
+    // when multiple threads try to create the same file simultaneously
+    pthread_mutex_lock(session->file_mutex);
+    
+    // Open file for writing
     if (chunk_offset > 0) {
         // Chunk mode: open existing file or create if needed
         session->upload_fp = fopen(path, "r+b");
@@ -599,10 +828,8 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
             // File doesn't exist, create it with full size
             session->upload_fp = fopen(path, "wb");
             if (session->upload_fp) {
-                // CRITICAL: Allocate full file size before any chunk writes
-                // This ensures all chunks can write to their offsets without corruption
+                // Allocate full file size
                 if (fseeko(session->upload_fp, file_size - 1, SEEK_SET) == 0) {
-                    // Write a single byte at the end to allocate the full size
                     fputc(0, session->upload_fp);
                     fflush(session->upload_fp);
                 }
@@ -619,7 +846,11 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
         session->upload_fp = fopen(path, "wb");
     }
     
+    pthread_mutex_unlock(session->file_mutex);
+    
     if (!session->upload_fp) {
+        release_file_mutex(path);
+        session->file_mutex = NULL;
         send_error(session->sock, "Cannot create file");
         return;
     }
@@ -640,26 +871,34 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
 
 // Handle UPLOAD_CHUNK
 void handle_upload_chunk(client_session_t *session, const uint8_t *data, uint32_t data_len) {
-    if (!session->upload_fp) {
+    if (!session->upload_fp || !session->file_mutex) {
         send_error(session->sock, "No upload in progress");
         return;
     }
     
-    // Direct write with periodic flush for stability
+    // Lock ONLY this file's mutex - other files can write in parallel!
+    pthread_mutex_lock(session->file_mutex);
+    
     size_t written = fwrite(data, 1, data_len, session->upload_fp);
+    
     if (written != data_len) {
+        pthread_mutex_unlock(session->file_mutex);
         send_error(session->sock, "Write failed");
         fclose(session->upload_fp);
         session->upload_fp = NULL;
+        release_file_mutex(session->upload_path);
+        session->file_mutex = NULL;
         return;
     }
     
     session->upload_received += written;
     
-    // Flush every 32MB to prevent buffer overflow with multiple connections
+    // Flush every 32MB to prevent buffer overflow - MUST be inside mutex!
     if (session->upload_received % (32 * 1024 * 1024) < data_len) {
         fflush(session->upload_fp);
     }
+    
+    pthread_mutex_unlock(session->file_mutex);
     // No response - zero blocking for maximum speed
 }
 
@@ -673,6 +912,12 @@ void handle_end_upload(client_session_t *session) {
     fflush(session->upload_fp);
     fclose(session->upload_fp);
     session->upload_fp = NULL;
+    
+    if (session->file_mutex) {
+        release_file_mutex(session->upload_path);
+        session->file_mutex = NULL;
+    }
+    
     chmod(session->upload_path, 0777);
     
     send_ok(session->sock, "Upload complete");
@@ -689,11 +934,7 @@ void *client_thread(void *arg) {
         return NULL;
     }
     
-    // Set socket timeout to prevent blocking forever (60 seconds)
-    struct timeval tv;
-    tv.tv_sec = 60;
-    tv.tv_usec = 0;
-    setsockopt(session->sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    // No socket timeout - connection stays open indefinitely until client disconnects
     
     while (1) {
         // Read command header (5 bytes: 1 cmd + 4 data_len)
@@ -790,6 +1031,9 @@ void *client_thread(void *arg) {
                 close(session->sock);
                 if (session->upload_fp) {
                     fclose(session->upload_fp);
+                    if (session->file_mutex) {
+                        release_file_mutex(session->upload_path);
+                    }
                 }
                 free(session);
                 exit(0);
@@ -803,6 +1047,9 @@ void *client_thread(void *arg) {
     close(session->sock);
     if (session->upload_fp) {
         fclose(session->upload_fp);
+        if (session->file_mutex) {
+            release_file_mutex(session->upload_path);
+        }
     }
     free(session);
     return NULL;
@@ -842,7 +1089,8 @@ int main() {
         return 1;
     }
     
-    if (listen(server_sock, 10) < 0) {
+    // Increase backlog to handle multiple parallel connections (up to 128)
+    if (listen(server_sock, 128) < 0) {
         close(server_sock);
         return 1;
     }
@@ -891,9 +1139,25 @@ int main() {
         
         // NOTE: Removed TCP_NOPUSH - it was causing buffering delays!
         
-        // Set keepalive to prevent connection drops
+        // CRITICAL: Set very long timeout to prevent drops on large files
+        // Large files (15GB) can take minutes to upload
+        struct timeval tv;
+        tv.tv_sec = 300;  // 5 minutes timeout
+        tv.tv_usec = 0;
+        setsockopt(client_sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+        setsockopt(client_sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+        
+        // CRITICAL: Aggressive keepalive to prevent connection drops on large files
         int keepalive = 1;
         setsockopt(client_sock, SOL_SOCKET, SO_KEEPALIVE, &keepalive, sizeof(keepalive));
+        
+        // Set keepalive parameters (FreeBSD/PS5)
+        int keepidle = 10;   // Start keepalive after 10 seconds of idle
+        int keepintvl = 5;   // Send keepalive every 5 seconds
+        int keepcnt = 3;     // Drop connection after 3 failed keepalives
+        setsockopt(client_sock, IPPROTO_TCP, TCP_KEEPIDLE, &keepidle, sizeof(keepidle));
+        setsockopt(client_sock, IPPROTO_TCP, TCP_KEEPINTVL, &keepintvl, sizeof(keepintvl));
+        setsockopt(client_sock, IPPROTO_TCP, TCP_KEEPCNT, &keepcnt, sizeof(keepcnt));
         
         client_session_t *session = malloc(sizeof(client_session_t));
         if (!session) {
