@@ -22,7 +22,7 @@
 #include <ifaddrs.h>
 
 #define SERVER_PORT 9113
-#define BUFFER_SIZE (4 * 1024 * 1024)  // 4MB - MUST match client BufferSize
+#define BUFFER_SIZE (8 * 1024 * 1024)  // 8MB for maximum throughput
 #define MAX_PATH 2048
 #define DISK_WORKER_COUNT 4
 #define QUEUE_MAX_SIZE 32
@@ -133,7 +133,7 @@ void send_notification(const char *msg) {
 
 typedef struct {
     int sock;
-    FILE *upload_fp;
+    int upload_fd;  // File descriptor for direct write (faster than FILE*)
     pthread_mutex_t *file_mutex;  // Per-file mutex
     char upload_path[MAX_PATH];
     uint64_t upload_size;
@@ -784,9 +784,9 @@ void handle_move_file(client_session_t *session, const uint8_t *data, uint32_t d
 
 // Handle START_UPLOAD (with optional chunk offset for parallel upload)
 void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_t data_len) {
-    if (session->upload_fp) {
-        fclose(session->upload_fp);
-        session->upload_fp = NULL;
+    if (session->upload_fd >= 0) {
+        close(session->upload_fd);
+        session->upload_fd = -1;
         // Release previous file mutex to prevent leak
         if (session->file_mutex) {
             release_file_mutex(session->upload_path);
@@ -832,37 +832,24 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     // when multiple threads try to create the same file simultaneously
     pthread_mutex_lock(session->file_mutex);
     
-    // Open file for writing
+    // Open file for writing using direct syscalls (faster than FILE*)
     // For chunked uploads, we need to pre-allocate the file on first chunk
-    // and open with r+b for subsequent chunks
     if (chunk_offset > 0) {
         // Subsequent chunk: open existing file
-        session->upload_fp = fopen(path, "r+b");
-        if (session->upload_fp) {
+        session->upload_fd = open(path, O_WRONLY);
+        if (session->upload_fd >= 0) {
             // Seek to chunk offset
-            fseeko(session->upload_fp, chunk_offset, SEEK_SET);
+            lseek(session->upload_fd, chunk_offset, SEEK_SET);
         }
     } else {
         // First chunk or small file: create new file
-        // Check if this is a chunked upload (file_size > chunk that will be sent)
-        // We pre-allocate for large files to ensure r+b works for subsequent chunks
-        session->upload_fp = fopen(path, "wb");
-        if (session->upload_fp && file_size > 100 * 1024 * 1024) {
+        session->upload_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+        if (session->upload_fd >= 0 && file_size > 100 * 1024 * 1024) {
             // Large file - pre-allocate full size for chunked upload
-            // FIX: Check if pre-allocation succeeds (disk might be full!)
-            int prealloc_ok = 0;
-            if (fseeko(session->upload_fp, file_size - 1, SEEK_SET) == 0) {
-                if (fputc(0, session->upload_fp) != EOF) {
-                    if (fflush(session->upload_fp) == 0) {
-                        prealloc_ok = 1;
-                    }
-                }
-            }
-            
-            if (!prealloc_ok) {
+            if (lseek(session->upload_fd, file_size - 1, SEEK_SET) < 0 || write(session->upload_fd, "", 1) != 1) {
                 // Pre-allocation failed - likely disk full
-                fclose(session->upload_fp);
-                session->upload_fp = NULL;
+                close(session->upload_fd);
+                session->upload_fd = -1;
                 pthread_mutex_unlock(session->file_mutex);
                 release_file_mutex(path);
                 session->file_mutex = NULL;
@@ -872,28 +859,25 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
             }
             
             // Seek back to beginning
-            fseeko(session->upload_fp, 0, SEEK_SET);
+            lseek(session->upload_fd, 0, SEEK_SET);
         }
     }
     
     pthread_mutex_unlock(session->file_mutex);
     
-    if (!session->upload_fp) {
+    if (session->upload_fd < 0) {
         release_file_mutex(path);
         session->file_mutex = NULL;
         send_error(session->sock, "Cannot create file");
         return;
     }
     
-    // Use 4MB buffer for write speed
-    setvbuf(session->upload_fp, NULL, _IOFBF, BUFFER_SIZE);
-    
     strncpy(session->upload_path, path, sizeof(session->upload_path) - 1);
     session->upload_size = file_size;
     session->upload_received = chunk_offset;
     
     // Increase socket receive buffer for this upload session
-    int huge_buf = 4 * 1024 * 1024; // 4MB receive buffer - matches client
+    int huge_buf = 16 * 1024 * 1024; // 16MB receive buffer - matches download optimization
     setsockopt(session->sock, SOL_SOCKET, SO_RCVBUF, &huge_buf, sizeof(huge_buf));
     
     send_response(session->sock, RESP_READY, NULL, 0);
@@ -901,7 +885,7 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
 
 // Handle UPLOAD_CHUNK
 void handle_upload_chunk(client_session_t *session, const uint8_t *data, uint32_t data_len) {
-    if (!session->upload_fp || !session->file_mutex) {
+    if (session->upload_fd < 0 || !session->file_mutex) {
         send_error(session->sock, "No upload in progress");
         return;
     }
@@ -909,13 +893,14 @@ void handle_upload_chunk(client_session_t *session, const uint8_t *data, uint32_
     // Lock ONLY this file's mutex - other files can write in parallel!
     pthread_mutex_lock(session->file_mutex);
     
-    size_t written = fwrite(data, 1, data_len, session->upload_fp);
+    // Direct write syscall for maximum speed (matches download optimization)
+    ssize_t written = write(session->upload_fd, data, data_len);
     
     if (written != data_len) {
         pthread_mutex_unlock(session->file_mutex);
         send_error(session->sock, "Write failed");
-        fclose(session->upload_fp);
-        session->upload_fp = NULL;
+        close(session->upload_fd);
+        session->upload_fd = -1;
         release_file_mutex(session->upload_path);
         session->file_mutex = NULL;
         return;
@@ -923,25 +908,20 @@ void handle_upload_chunk(client_session_t *session, const uint8_t *data, uint32_
     
     session->upload_received += written;
     
-    // Flush every 32MB to prevent buffer overflow - MUST be inside mutex!
-    if (session->upload_received % (32 * 1024 * 1024) < data_len) {
-        fflush(session->upload_fp);
-    }
-    
     pthread_mutex_unlock(session->file_mutex);
     // No response - zero blocking for maximum speed
 }
 
 // Handle END_UPLOAD
 void handle_end_upload(client_session_t *session) {
-    if (!session->upload_fp) {
+    if (session->upload_fd < 0) {
         send_error(session->sock, "No upload in progress");
         return;
     }
     
-    fflush(session->upload_fp);
-    fclose(session->upload_fp);
-    session->upload_fp = NULL;
+    // Direct close syscall (no buffering to flush)
+    close(session->upload_fd);
+    session->upload_fd = -1;
     
     if (session->file_mutex) {
         release_file_mutex(session->upload_path);
@@ -972,43 +952,30 @@ void handle_download_file(client_session_t *session, const char *path) {
     uint64_t file_size = st.st_size;
     send_response(session->sock, RESP_DATA, &file_size, sizeof(file_size));
     
-    // Use sendfile for zero-copy transfer (same as FTP server optimization)
-    #ifdef __FreeBSD__
-    off_t offset = 0;
-    off_t sbytes = 0;
+    // Manual read/write loop for maximum sustained throughput
+    // FreeBSD sendfile has TCP congestion issues with large files
+    char *buffer = malloc(8 * 1024 * 1024);
+    if (!buffer) {
+        close(fd);
+        send_error(session->sock, "Out of memory");
+        return;
+    }
     
-    // Send in chunks for progress tracking
-    const off_t CHUNK_SIZE = 100 * 1024 * 1024; // 100MB chunks
-    while (offset < file_size) {
-        off_t to_send = (file_size - offset > CHUNK_SIZE) ? CHUNK_SIZE : (file_size - offset);
-        sbytes = 0;
-        
-        int result = sendfile(fd, session->sock, offset, to_send, NULL, &sbytes, 0);
-        if (result < 0 && errno != EAGAIN) {
-            close(fd);
-            return;
-        }
-        
-        offset += sbytes;
-        if (sbytes == 0) break;
-    }
-    #else
-    // Fallback for non-FreeBSD systems
-    char *buffer = malloc(BUFFER_SIZE);
-    if (buffer) {
-        ssize_t n;
-        while ((n = read(fd, buffer, BUFFER_SIZE)) > 0) {
-            ssize_t sent = 0;
-            while (sent < n) {
-                ssize_t s = send(session->sock, buffer + sent, n - sent, 0);
-                if (s <= 0) break;
-                sent += s;
+    ssize_t n;
+    while ((n = read(fd, buffer, 8 * 1024 * 1024)) > 0) {
+        ssize_t sent = 0;
+        while (sent < n) {
+            ssize_t s = send(session->sock, buffer + sent, n - sent, 0);
+            if (s <= 0) {
+                free(buffer);
+                close(fd);
+                return;
             }
-            if (sent != n) break;
+            sent += s;
         }
-        free(buffer);
     }
-    #endif
+    
+    free(buffer);
     
     close(fd);
 }
@@ -1023,6 +990,9 @@ void *client_thread(void *arg) {
         free(session);
         return NULL;
     }
+    
+    // Initialize upload_fd to -1 (not open)
+    session->upload_fd = -1;
     
     // No socket timeout - connection stays open indefinitely until client disconnects
     
@@ -1124,8 +1094,8 @@ void *client_thread(void *arg) {
                 send_ok(session->sock, "Shutting down");
                 free(buffer);
                 close(session->sock);
-                if (session->upload_fp) {
-                    fclose(session->upload_fp);
+                if (session->upload_fd >= 0) {
+                    close(session->upload_fd);
                     if (session->file_mutex) {
                         release_file_mutex(session->upload_path);
                     }
@@ -1140,8 +1110,8 @@ void *client_thread(void *arg) {
     
     free(buffer);
     close(session->sock);
-    if (session->upload_fp) {
-        fclose(session->upload_fp);
+    if (session->upload_fd >= 0) {
+        close(session->upload_fd);
         if (session->file_mutex) {
             release_file_mutex(session->upload_path);
         }
@@ -1169,8 +1139,8 @@ int main() {
     int no_sigpipe = 1;
     setsockopt(server_sock, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
     
-    // 4MB buffers - matches client
-    int buf_size = 4 * 1024 * 1024;
+    // 16MB buffers for maximum throughput
+    int buf_size = 16 * 1024 * 1024;
     setsockopt(server_sock, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
     setsockopt(server_sock, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
     
@@ -1223,14 +1193,18 @@ int main() {
         // Aggressive TCP socket options for sustained high speed
         setsockopt(client_sock, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
         
-        // Increase buffers to 4MB - matches client
-        int large_buf = 4 * 1024 * 1024;
+        // Increase buffers to 16MB for maximum throughput
+        int large_buf = 16 * 1024 * 1024;
         setsockopt(client_sock, SOL_SOCKET, SO_RCVBUF, &large_buf, sizeof(large_buf));
         setsockopt(client_sock, SOL_SOCKET, SO_SNDBUF, &large_buf, sizeof(large_buf));
         
         // TCP optimizations - TCP_NODELAY for immediate send
         int nodelay = 1;
         setsockopt(client_sock, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof(nodelay));
+        
+        // TCP_MAXSEG to prevent fragmentation and maintain high speed
+        int maxseg = 1460; // Standard Ethernet MSS
+        setsockopt(client_sock, IPPROTO_TCP, TCP_MAXSEG, &maxseg, sizeof(maxseg));
         
         // NOTE: Removed TCP_NOPUSH - it was causing buffering delays!
         

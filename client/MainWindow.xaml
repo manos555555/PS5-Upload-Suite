@@ -3,6 +3,7 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="PS5 Upload - High-Speed File Transfer" Height="600" Width="1200"
         WindowStartupLocation="CenterScreen"
+        WindowState="Maximized"
         Background="#1E1E1E"
         Icon="ps5_logo.png">
     
@@ -569,59 +570,277 @@
                 </Grid>
             </Border>
 
-            <!-- Log Panel -->
+            <!-- Log & History Panel -->
             <Border Grid.Column="4" 
                     Background="#252526" 
                     BorderBrush="#3E3E42" 
                     BorderThickness="1" 
                     CornerRadius="4">
-                <Grid>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="*"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
+                <TabControl Background="#252526" BorderThickness="0">
+                    <TabControl.Resources>
+                        <Style TargetType="TabItem">
+                            <Setter Property="Background" Value="#2D2D30"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Padding" Value="15,8"/>
+                            <Setter Property="FontSize" Value="14"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="TabItem">
+                                        <Border Name="Border" Background="{TemplateBinding Background}" 
+                                                BorderThickness="0,0,0,2" BorderBrush="Transparent" 
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter ContentSource="Header" 
+                                                              HorizontalAlignment="Center" 
+                                                              VerticalAlignment="Center"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="#1E1E1E"/>
+                                                <Setter TargetName="Border" Property="BorderBrush" Value="#007ACC"/>
+                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter TargetName="Border" Property="Background" Value="#3E3E42"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </TabControl.Resources>
+                    
+                    <!-- Debug Log Tab -->
+                    <TabItem Header="📋 Debug Log">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                    <Border Grid.Row="0" 
-                            Background="#2D2D30" 
-                            Padding="10"
-                            BorderBrush="#3E3E42"
-                            BorderThickness="0,0,0,1">
-                        <TextBlock Text="📋 Debug Log" 
-                                   FontSize="16" 
-                                   FontWeight="SemiBold"/>
-                    </Border>
+                            <TextBox Grid.Row="0" 
+                                     x:Name="LogTextBox"
+                                     Text=""
+                                     FontFamily="Consolas"
+                                     FontSize="11"
+                                     Foreground="#CCCCCC"
+                                     Background="#1E1E1E"
+                                     BorderThickness="0"
+                                     Padding="10"
+                                     TextWrapping="Wrap"
+                                     IsReadOnly="True"
+                                     IsReadOnlyCaretVisible="False"
+                                     Focusable="False"
+                                     Cursor="Arrow"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"/>
 
-                    <TextBox Grid.Row="1" 
-                             x:Name="LogTextBox"
-                             Text=""
-                             FontFamily="Consolas"
-                             FontSize="11"
-                             Foreground="#CCCCCC"
-                             Background="#1E1E1E"
-                             BorderThickness="0"
-                             Padding="10"
-                             TextWrapping="Wrap"
-                             IsReadOnly="True"
-                             IsReadOnlyCaretVisible="False"
-                             Focusable="False"
-                             Cursor="Arrow"
-                             VerticalScrollBarVisibility="Auto"
-                             HorizontalScrollBarVisibility="Auto"/>
+                            <StackPanel Grid.Row="1" 
+                                        Orientation="Horizontal" 
+                                        Margin="10"
+                                        HorizontalAlignment="Center">
+                                <Button Content="📋 Copy Log"
+                                        Click="CopyLogButton_Click"
+                                        Margin="0,0,10,0"
+                                        Background="#28A745"/>
+                                <Button Content="Clear Log"
+                                        Click="ClearLogButton_Click"
+                                        Background="#3E3E42"/>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+                    
+                    <!-- Transfer History Tab -->
+                    <TabItem Header="📊 Transfer History">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                    <StackPanel Grid.Row="2" 
-                                Orientation="Horizontal" 
-                                Margin="10"
-                                HorizontalAlignment="Center">
-                        <Button Content="📋 Copy Log"
-                                Click="CopyLogButton_Click"
-                                Margin="0,0,10,0"
-                                Background="#28A745"/>
-                        <Button Content="Clear Log"
-                                Click="ClearLogButton_Click"
-                                Background="#3E3E42"/>
-                    </StackPanel>
-                </Grid>
+                            <ScrollViewer Grid.Row="0" 
+                                          VerticalScrollBarVisibility="Auto"
+                                          Background="#1E1E1E">
+                                <StackPanel>
+                                    <!-- Completed Transfers Section -->
+                                    <Expander Header="✅ Completed Transfers" 
+                                              IsExpanded="True"
+                                              Background="#2D2D30"
+                                              Foreground="White"
+                                              BorderBrush="#3E3E42"
+                                              BorderThickness="0,0,0,1"
+                                              Padding="5">
+                                        <ListBox x:Name="CompletedTransfersListBox"
+                                                 BorderThickness="0"
+                                                 Background="#1E1E1E"
+                                                 Foreground="White"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 MaxHeight="400">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border BorderBrush="#3E3E42" 
+                                                            BorderThickness="0,0,0,1" 
+                                                            Padding="10,8"
+                                                            Background="Transparent">
+                                                        <Grid>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                            </Grid.RowDefinitions>
+                                                            
+                                                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
+                                                                <TextBlock Text="{Binding StatusIcon}" 
+                                                                           FontSize="14" 
+                                                                           Margin="0,0,8,0"/>
+                                                                <TextBlock Text="{Binding Type}" 
+                                                                           FontWeight="Bold" 
+                                                                           FontSize="13"
+                                                                           Foreground="#007ACC"
+                                                                           Margin="0,0,8,0"/>
+                                                                <TextBlock Text="{Binding TimestampFormatted}" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#999999"/>
+                                                            </StackPanel>
+                                                            
+                                                            <TextBlock Grid.Row="1" 
+                                                                       Text="{Binding FileName}" 
+                                                                       FontSize="12"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Margin="0,0,0,4"/>
+                                                            
+                                                            <StackPanel Grid.Row="2" Orientation="Horizontal">
+                                                                <TextBlock Text="{Binding SizeFormatted}" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#999999"
+                                                                           Margin="0,0,10,0"/>
+                                                                <TextBlock Text="•" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#666666"
+                                                                           Margin="0,0,10,0"/>
+                                                                <TextBlock Text="{Binding SpeedFormatted}" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#28A745"/>
+                                                            </StackPanel>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                        </ListBox>
+                                    </Expander>
+                                    
+                                    <!-- Failed Transfers Section -->
+                                    <Expander Header="❌ Failed Transfers" 
+                                              IsExpanded="True"
+                                              Background="#2D2D30"
+                                              Foreground="White"
+                                              BorderBrush="#3E3E42"
+                                              BorderThickness="0,0,0,1"
+                                              Padding="5"
+                                              Margin="0,5,0,0">
+                                        <ListBox x:Name="FailedTransfersListBox"
+                                                 BorderThickness="0"
+                                                 Background="#1E1E1E"
+                                                 Foreground="White"
+                                                 SelectionMode="Extended"
+                                                 ScrollViewer.HorizontalScrollBarVisibility="Disabled"
+                                                 MaxHeight="400"
+                                                 MouseRightButtonUp="FailedTransfersListBox_RightClick">
+                                            <ListBox.ItemTemplate>
+                                                <DataTemplate>
+                                                    <Border BorderBrush="#3E3E42" 
+                                                            BorderThickness="0,0,0,1" 
+                                                            Padding="10,8"
+                                                            Background="Transparent">
+                                                        <Grid>
+                                                            <Grid.RowDefinitions>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                                <RowDefinition Height="Auto"/>
+                                                            </Grid.RowDefinitions>
+                                                            
+                                                            <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,4">
+                                                                <TextBlock Text="{Binding StatusIcon}" 
+                                                                           FontSize="14" 
+                                                                           Margin="0,0,8,0"/>
+                                                                <TextBlock Text="{Binding Type}" 
+                                                                           FontWeight="Bold" 
+                                                                           FontSize="13"
+                                                                           Foreground="#DC3545"
+                                                                           Margin="0,0,8,0"/>
+                                                                <TextBlock Text="{Binding TimestampFormatted}" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#999999"/>
+                                                            </StackPanel>
+                                                            
+                                                            <TextBlock Grid.Row="1" 
+                                                                       Text="{Binding FileName}" 
+                                                                       FontSize="12"
+                                                                       FontWeight="SemiBold"
+                                                                       TextTrimming="CharacterEllipsis"
+                                                                       Margin="0,0,0,4"/>
+                                                            
+                                                            <StackPanel Grid.Row="2" Orientation="Horizontal" Margin="0,0,0,4">
+                                                                <TextBlock Text="{Binding SizeFormatted}" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#999999"
+                                                                           Margin="0,0,10,0"/>
+                                                                <TextBlock Text="•" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#666666"
+                                                                           Margin="0,0,10,0"/>
+                                                                <TextBlock Text="{Binding SpeedFormatted}" 
+                                                                           FontSize="11" 
+                                                                           Foreground="#DC3545"/>
+                                                            </StackPanel>
+                                                            
+                                                            <TextBlock Grid.Row="3" 
+                                                                       Text="{Binding ErrorMessage}" 
+                                                                       FontSize="10"
+                                                                       FontStyle="Italic"
+                                                                       Foreground="#FFC107"
+                                                                       TextWrapping="Wrap"/>
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ListBox.ItemTemplate>
+                                            <ListBox.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="🔄 Retry Selected" Click="RetryFailedTransfers_Click"/>
+                                                    <MenuItem Header="🗑️ Remove Selected" Click="RemoveFailedTransfers_Click"/>
+                                                </ContextMenu>
+                                            </ListBox.ContextMenu>
+                                        </ListBox>
+                                    </Expander>
+                                </StackPanel>
+                            </ScrollViewer>
+
+                            <StackPanel Grid.Row="1" 
+                                        Orientation="Vertical" 
+                                        Margin="10"
+                                        HorizontalAlignment="Center">
+                                <StackPanel Orientation="Horizontal" 
+                                            HorizontalAlignment="Center"
+                                            Margin="0,0,0,10">
+                                    <Button Content="📊 Export"
+                                            Click="ExportHistoryButton_Click"
+                                            Margin="0,0,10,0"
+                                            Background="#28A745"/>
+                                    <Button Content="🗑️ Clear All"
+                                            Click="ClearHistoryButton_Click"
+                                            Background="#DC3545"/>
+                                </StackPanel>
+                                <CheckBox x:Name="AutoClearHistoryCheckBox"
+                                          Content="🔄 Auto Clear on Startup"
+                                          HorizontalAlignment="Center"
+                                          Foreground="White"
+                                          Checked="AutoClearHistoryCheckBox_Changed"
+                                          Unchecked="AutoClearHistoryCheckBox_Changed"/>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
             </Border>
         </Grid>
 

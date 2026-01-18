@@ -40,7 +40,7 @@ namespace PS5Upload
     {
         private TcpClient? _client;
         private NetworkStream? _stream;
-        private const int BufferSize = 4 * 1024 * 1024; // 4MB chunks - MUST match payload BUFFER_SIZE
+        private const int BufferSize = 8 * 1024 * 1024; // 8MB chunks for maximum throughput
 
         public bool IsConnected => _client?.Connected ?? false;
 
@@ -49,8 +49,8 @@ namespace PS5Upload
             try
             {
                 _client = new TcpClient();
-                _client.ReceiveBufferSize = 64 * 1024 * 1024; // 64MB for maximum TCP throughput
-                _client.SendBufferSize = 64 * 1024 * 1024; // 64MB for maximum TCP throughput
+                _client.ReceiveBufferSize = 128 * 1024 * 1024; // 128MB for maximum download throughput
+                _client.SendBufferSize = 128 * 1024 * 1024; // 128MB for maximum upload throughput
                 _client.NoDelay = true;
                 _client.LingerState = new System.Net.Sockets.LingerOption(false, 0);
 
@@ -507,12 +507,13 @@ namespace PS5Upload
                 await ReadExactAsync(sizeBytes, 8);
                 long fileSize = BitConverter.ToInt64(sizeBytes, 0);
                 
-                // Now read raw file data directly from socket
-                using var fs = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize);
+                // Now read raw file data directly from socket with optimized buffering
+                using var fs = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize, FileOptions.WriteThrough | FileOptions.SequentialScan);
                 
                 byte[] buffer = new byte[BufferSize];
                 long totalReceived = 0;
                 var startTime = DateTime.Now;
+                var lastProgressReport = DateTime.Now;
                 
                 while (totalReceived < fileSize)
                 {
@@ -526,10 +527,11 @@ namespace PS5Upload
                     await fs.WriteAsync(buffer, 0, received, cancellationToken);
                     totalReceived += received;
                     
-                    // Report progress every 5MB or at completion
-                    if (totalReceived % (5 * 1024 * 1024) < BufferSize || totalReceived == fileSize)
+                    // Report progress every 16MB or every 200ms for smooth UI updates
+                    var now = DateTime.Now;
+                    if (totalReceived % (16 * 1024 * 1024) < BufferSize || (now - lastProgressReport).TotalMilliseconds >= 200 || totalReceived == fileSize)
                     {
-                        var elapsed = DateTime.Now - startTime;
+                        var elapsed = now - startTime;
                         double speed = elapsed.TotalSeconds > 0 ? totalReceived / elapsed.TotalSeconds : 0;
                         
                         progress?.Report(new UploadProgress
@@ -542,6 +544,8 @@ namespace PS5Upload
                             EstimatedTimeRemaining = speed > 0 ? TimeSpan.FromSeconds((fileSize - totalReceived) / speed) : TimeSpan.Zero,
                             CurrentFileName = Path.GetFileName(localPath)
                         });
+                        
+                        lastProgressReport = now;
                     }
                 }
                 

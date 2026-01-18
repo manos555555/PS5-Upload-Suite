@@ -32,6 +32,14 @@ namespace PS5Upload
         private List<string> _favoritePaths = new List<string>();
         private const string FavoritesFileName = "ps5_favorites.json";
         
+        // Transfer History
+        private ObservableCollection<TransferHistoryItem> _transferHistory = new ObservableCollection<TransferHistoryItem>();
+        private ObservableCollection<TransferHistoryItem> _completedTransfers = new ObservableCollection<TransferHistoryItem>();
+        private ObservableCollection<TransferHistoryItem> _failedTransfers = new ObservableCollection<TransferHistoryItem>();
+        private const string HistoryFileName = "ps5_transfer_history.json";
+        private const string SettingsFileName = "ps5_upload_settings.json";
+        private bool _autoClearHistoryOnStartup = false;
+        
         // Parallel upload settings
         private const int MaxParallelUploads = 16; // 16 parallel uploads for maximum speed (~105-108 MB/s)
         
@@ -67,6 +75,8 @@ namespace PS5Upload
             InitializeComponent();
             LocalFilesListBox.ItemsSource = _localFiles;
             PS5FilesListBox.ItemsSource = _ps5FilesFiltered;
+            CompletedTransfersListBox.ItemsSource = _completedTransfers;
+            FailedTransfersListBox.ItemsSource = _failedTransfers;
             
             // Initialize real-time UI update timer (500ms interval)
             _uiUpdateTimer = new DispatcherTimer();
@@ -93,6 +103,12 @@ namespace PS5Upload
             
             // Load saved favorite paths
             LoadFavorites();
+            
+            // Load settings (including auto-clear preference)
+            LoadSettings();
+            
+            // Load transfer history (will be cleared if auto-clear is enabled)
+            LoadTransferHistory();
         }
 
         private void UiUpdateTimer_Tick(object? sender, EventArgs e)
@@ -775,10 +791,10 @@ namespace PS5Upload
                         FileInfo fileInfo = new FileInfo(localPath);
                         
                         // CRITICAL: Large files (>100 MB) - limit parallel uploads to prevent PS5 memory exhaustion
-                        // Each large file uses ~4MB RAM buffer, so 8 files = ~32MB RAM (safe for PS5's 13.5GB available)
+                        // 8 parallel large files for maximum aggregate throughput
                         // This threshold MUST match CHUNK_THRESHOLD in UploadFileParallelAsync
                         const long LARGE_FILE_THRESHOLD = 100 * 1024 * 1024; // 100 MB - same as chunking threshold
-                        const int MAX_PARALLEL_LARGE_FILES = 8; // 8 large files at a time - optimized for speed
+                        const int MAX_PARALLEL_LARGE_FILES = 8; // 8 large files at a time - optimal balance
                         bool isLargeFile = fileInfo.Length > LARGE_FILE_THRESHOLD;
                         
                         // Count how many large files are currently uploading
@@ -976,7 +992,6 @@ namespace PS5Upload
                 if (!_uploadCancellation.Token.IsCancellationRequested)
                 {
                     Log($"🎉 Upload completed! {_totalFilesToUpload} files, {FormatFileSize(_totalBytesUploaded)}");
-                    MessageBox.Show($"Upload completed!\n\n{_totalFilesToUpload} files uploaded\nTotal: {FormatFileSize(_totalBytesUploaded)}", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                     _localFiles.Clear();
                     
                     // FIX: Keep main protocol connection alive - no disconnect/reconnect needed!
@@ -1002,7 +1017,20 @@ namespace PS5Upload
                     }
                     
                     await UpdateStorageInfoAsync();
+                    
+                    // Wait a bit to ensure PS5 filesystem has committed all files
+                    await Task.Delay(500);
+                    
+                    // Clear upload cancellation token so LoadPS5DirectoryAsync won't skip
+                    _uploadCancellation?.Dispose();
+                    _uploadCancellation = null;
+                    
+                    Log($"🔄 Refreshing directory: {_currentPS5Path}");
                     await LoadPS5DirectoryAsync(_currentPS5Path);
+                    Log("✅ Directory refreshed - uploaded files should now be visible");
+                    
+                    // Show success message AFTER refresh so user sees updated file list immediately
+                    MessageBox.Show($"Upload completed!\n\n{_totalFilesToUpload} files uploaded\nTotal: {FormatFileSize(_totalBytesUploaded)}", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 else
                 {
@@ -1087,8 +1115,13 @@ namespace PS5Upload
                 ProgressPanel.Visibility = Visibility.Collapsed;
                 UploadButton.IsEnabled = true;
                 CancelButton.IsEnabled = false;
-                _uploadCancellation?.Dispose();
-                _uploadCancellation = null;
+                
+                // Only dispose if not already disposed (may have been cleared during refresh)
+                if (_uploadCancellation != null)
+                {
+                    _uploadCancellation.Dispose();
+                    _uploadCancellation = null;
+                }
             }
         }
         
@@ -1178,8 +1211,8 @@ namespace PS5Upload
                                 UploadProgressText.Text = $"{FormatFileSize(offset + p.BytesSent)} / {FormatFileSize(fileInfo.Length)} ({filePercent:F1}%)";
                             });
                             
-                            // Log progress periodically
-                            if (p.BytesSent % (40 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
+                            // Log progress periodically (every 16MB for better visibility)
+                            if (p.BytesSent % (16 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
                             {
                                 Log($"📊 Chunk {chunkIndex + 1}/{totalChunks}: {FormatFileSize(p.BytesSent)}/{FormatFileSize(size)} @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
                             }
@@ -1205,11 +1238,20 @@ namespace PS5Upload
                     
                     if (allChunksSuccess)
                     {
-                        Log($"✅ Upload complete (chunked): {fileName}");
+                        double avgSpeed = fileInfo.Length / (DateTime.Now - _uploadStartTime).TotalSeconds;
+                        Log($"✅ Upload complete (chunked): {fileName} @ {FormatFileSize((long)avgSpeed)}/s");
+                        
+                        // Add to transfer history
+                        double avgSpeedMBps = avgSpeed / (1024 * 1024);
+                        AddToHistory("Upload", fileName, localPath, remotePath, fileInfo.Length, avgSpeedMBps, "Success");
                     }
                     else
                     {
                         Log($"❌ Upload failed (chunked): {fileName}");
+                        
+                        // Add to transfer history as failed
+                        AddToHistory("Upload", fileName, localPath, remotePath, fileInfo.Length, 0, "Failed", "Chunked upload failed");
+                        
                         throw new Exception($"Chunked upload failed for {fileName}");
                     }
                 }
@@ -1236,8 +1278,8 @@ namespace PS5Upload
                             UploadProgressText.Text = $"{FormatFileSize(p.BytesSent)} / {FormatFileSize(p.TotalBytes)} ({filePercent:F1}%)";
                         });
                         
-                        // Log progress periodically (every 40MB)
-                        if (p.BytesSent % (40 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
+                        // Log progress periodically (every 16MB for better visibility)
+                        if (p.BytesSent % (16 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
                         {
                             Log($"📊 {fileName}: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({filePercent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
                         }
@@ -1247,15 +1289,24 @@ namespace PS5Upload
                     
                     if (success)
                     {
-                        Log($"✅ Upload complete: {fileName}");
+                        double avgSpeed = fileInfo.Length / (DateTime.Now - _uploadStartTime).TotalSeconds;
+                        Log($"✅ Upload complete: {fileName} @ {FormatFileSize((long)avgSpeed)}/s");
                         lock (_progressLock)
                         {
                             _totalBytesUploaded += fileInfo.Length;
                         }
+                        
+                        // Add to transfer history
+                        double avgSpeedMBps = avgSpeed / (1024 * 1024);
+                        AddToHistory("Upload", fileName, localPath, remotePath, fileInfo.Length, avgSpeedMBps, "Success");
                     }
                     else
                     {
                         Log($"❌ Upload failed: {fileName}");
+                        
+                        // Add to transfer history as failed
+                        AddToHistory("Upload", fileName, localPath, remotePath, fileInfo.Length, 0, "Failed", "Upload failed");
+                        
                         throw new Exception($"Upload failed for {fileName}");
                     }
                 }
@@ -1894,12 +1945,20 @@ namespace PS5Upload
                     {
                         Log($"⬇️ Downloading: {item.Name} ({FormatFileSize(item.Size)})");
                         
+                        DateTime downloadStart = DateTime.Now;
+                        double totalSpeedMBps = 0;
+                        int speedSamples = 0;
+                        
                         var progress = new Progress<UploadProgress>(p =>
                         {
                             Dispatcher.Invoke(() =>
                             {
                                 double percent = p.TotalBytes > 0 ? (double)p.BytesSent / p.TotalBytes * 100 : 0;
                                 Log($"📊 Download progress: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({percent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                                
+                                // Track average speed
+                                totalSpeedMBps += p.SpeedBytesPerSecond / (1024 * 1024);
+                                speedSamples++;
                             });
                         });
                         
@@ -1908,17 +1967,32 @@ namespace PS5Upload
                         if (success)
                         {
                             Log($"✅ Downloaded: {item.Name} → {dialog.FileName}");
+                            
+                            // Calculate average speed
+                            double avgSpeed = speedSamples > 0 ? totalSpeedMBps / speedSamples : item.Size / (DateTime.Now - downloadStart).TotalSeconds / (1024 * 1024);
+                            
+                            // Add to transfer history
+                            AddToHistory("Download", item.Name, item.FullPath, dialog.FileName, item.Size, avgSpeed, "Success");
+                            
                             MessageBox.Show($"File downloaded successfully!\n\nSaved to: {dialog.FileName}", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                         }
                         else
                         {
                             Log($"❌ Download failed: {item.Name}");
+                            
+                            // Add to transfer history as failed
+                            AddToHistory("Download", item.Name, item.FullPath, dialog.FileName, item.Size, 0, "Failed", "Download failed");
+                            
                             MessageBox.Show("Download failed", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                         }
                     }
                     catch (Exception ex)
                     {
                         Log($"❌ Download error: {ex.Message}");
+                        
+                        // Add to transfer history as failed
+                        AddToHistory("Download", item.Name, item.FullPath, dialog.FileName ?? "", item.Size, 0, "Failed", ex.Message);
+                        
                         MessageBox.Show($"Download error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                     }
                 }
@@ -2390,6 +2464,363 @@ namespace PS5Upload
                 await LoadPS5DirectoryAsync(favoritePath);
             }
         }
+
+        // Transfer History Methods
+        private void LoadTransferHistory()
+        {
+            try
+            {
+                // If auto-clear is enabled, clear history on startup
+                if (_autoClearHistoryOnStartup)
+                {
+                    _transferHistory.Clear();
+                    _completedTransfers.Clear();
+                    _failedTransfers.Clear();
+                    SaveTransferHistory();
+                    Log("🔄 Transfer history auto-cleared on startup");
+                    return;
+                }
+                
+                if (File.Exists(HistoryFileName))
+                {
+                    string json = File.ReadAllText(HistoryFileName);
+                    var history = System.Text.Json.JsonSerializer.Deserialize<List<TransferHistoryItem>>(json);
+                    if (history != null)
+                    {
+                        _transferHistory.Clear();
+                        _completedTransfers.Clear();
+                        _failedTransfers.Clear();
+                        
+                        foreach (var item in history.OrderByDescending(h => h.Timestamp))
+                        {
+                            _transferHistory.Add(item);
+                            
+                            // Separate into completed and failed collections
+                            if (item.Status == "Success")
+                            {
+                                _completedTransfers.Add(item);
+                            }
+                            else
+                            {
+                                _failedTransfers.Add(item);
+                            }
+                        }
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"⚠️ Failed to load transfer history: {ex.Message}");
+            }
+        }
+
+        private void SaveTransferHistory()
+        {
+            try
+            {
+                var historyList = _transferHistory.ToList();
+                string json = System.Text.Json.JsonSerializer.Serialize(historyList, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(HistoryFileName, json);
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Failed to save transfer history: {ex.Message}");
+            }
+        }
+
+        private void AddToHistory(string type, string fileName, string sourcePath, string destinationPath, long size, double speedMBps, string status, string errorMessage = "")
+        {
+            var historyItem = new TransferHistoryItem
+            {
+                Timestamp = DateTime.Now,
+                Type = type,
+                FileName = fileName,
+                SourcePath = sourcePath,
+                DestinationPath = destinationPath,
+                Size = size,
+                SpeedMBps = speedMBps,
+                Status = status,
+                ErrorMessage = errorMessage
+            };
+
+            Dispatcher.Invoke(() =>
+            {
+                _transferHistory.Insert(0, historyItem); // Add to top
+                
+                // Add to appropriate collection
+                if (status == "Success")
+                {
+                    _completedTransfers.Insert(0, historyItem);
+                }
+                else
+                {
+                    _failedTransfers.Insert(0, historyItem);
+                }
+                
+                SaveTransferHistory();
+            });
+        }
+
+        private void ClearHistoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            var result = MessageBox.Show("Clear all transfer history?", "Confirm Clear", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
+            {
+                _transferHistory.Clear();
+                _completedTransfers.Clear();
+                _failedTransfers.Clear();
+                SaveTransferHistory();
+                Log("🗑️ Transfer history cleared");
+            }
+        }
+
+        private void AutoClearHistoryCheckBox_Changed(object sender, RoutedEventArgs e)
+        {
+            _autoClearHistoryOnStartup = AutoClearHistoryCheckBox.IsChecked == true;
+            SaveSettings();
+            
+            if (_autoClearHistoryOnStartup)
+            {
+                Log("✅ Auto-clear history on startup enabled");
+            }
+            else
+            {
+                Log("⚪ Auto-clear history on startup disabled");
+            }
+        }
+
+        // Settings Methods
+        private void LoadSettings()
+        {
+            try
+            {
+                if (File.Exists(SettingsFileName))
+                {
+                    string json = File.ReadAllText(SettingsFileName);
+                    var settings = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, bool>>(json);
+                    if (settings != null && settings.ContainsKey("AutoClearHistoryOnStartup"))
+                    {
+                        _autoClearHistoryOnStartup = settings["AutoClearHistoryOnStartup"];
+                        AutoClearHistoryCheckBox.IsChecked = _autoClearHistoryOnStartup;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"⚠️ Failed to load settings: {ex.Message}");
+            }
+        }
+
+        private void SaveSettings()
+        {
+            try
+            {
+                var settings = new Dictionary<string, bool>
+                {
+                    { "AutoClearHistoryOnStartup", _autoClearHistoryOnStartup }
+                };
+                string json = System.Text.Json.JsonSerializer.Serialize(settings, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(SettingsFileName, json);
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Failed to save settings: {ex.Message}");
+            }
+        }
+
+        private void ExportHistoryButton_Click(object sender, RoutedEventArgs e)
+        {
+            try
+            {
+                var saveDialog = new SaveFileDialog
+                {
+                    Filter = "CSV files (*.csv)|*.csv|JSON files (*.json)|*.json",
+                    FileName = $"PS5_Transfer_History_{DateTime.Now:yyyyMMdd_HHmmss}"
+                };
+
+                if (saveDialog.ShowDialog() == true)
+                {
+                    string extension = Path.GetExtension(saveDialog.FileName).ToLower();
+                    
+                    if (extension == ".csv")
+                    {
+                        // Export to CSV
+                        var csv = new System.Text.StringBuilder();
+                        csv.AppendLine("Timestamp,Type,FileName,SourcePath,DestinationPath,Size,Speed (MB/s),Status,ErrorMessage");
+                        
+                        foreach (var item in _transferHistory)
+                        {
+                            csv.AppendLine($"\"{item.TimestampFormatted}\",\"{item.Type}\",\"{item.FileName}\",\"{item.SourcePath}\",\"{item.DestinationPath}\",{item.Size},{item.SpeedMBps:F2},\"{item.Status}\",\"{item.ErrorMessage}\"");
+                        }
+                        
+                        File.WriteAllText(saveDialog.FileName, csv.ToString());
+                    }
+                    else
+                    {
+                        // Export to JSON
+                        string json = System.Text.Json.JsonSerializer.Serialize(_transferHistory.ToList(), new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                        File.WriteAllText(saveDialog.FileName, json);
+                    }
+                    
+                    Log($"📊 Transfer history exported to: {saveDialog.FileName}");
+                    MessageBox.Show($"Transfer history exported successfully!\n\n{saveDialog.FileName}", "Export Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Failed to export history: {ex.Message}");
+                MessageBox.Show($"Failed to export history:\n{ex.Message}", "Export Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void FailedTransfersListBox_RightClick(object sender, MouseButtonEventArgs e)
+        {
+            // Context menu will show automatically
+        }
+
+        private async void RetryFailedTransfers_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedItems = FailedTransfersListBox.SelectedItems.Cast<TransferHistoryItem>().ToList();
+            
+            if (selectedItems.Count == 0)
+            {
+                MessageBox.Show("No failed transfers selected.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (!_protocol.IsConnected)
+            {
+                MessageBox.Show("Not connected to PS5. Please connect first.", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            var result = MessageBox.Show($"Retry {selectedItems.Count} failed transfer(s)?", "Confirm Retry", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result != MessageBoxResult.Yes)
+                return;
+
+            Log($"🔄 Retrying {selectedItems.Count} failed transfer(s)...");
+
+            foreach (var item in selectedItems)
+            {
+                try
+                {
+                    if (item.Type == "Upload")
+                    {
+                        // Retry upload
+                        if (File.Exists(item.SourcePath))
+                        {
+                            Log($"🔄 Retrying upload: {item.FileName}");
+                            
+                            var fileInfo = new FileInfo(item.SourcePath);
+                            var progress = new Progress<UploadProgress>(p =>
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    double percent = p.TotalBytes > 0 ? (double)p.BytesSent / p.TotalBytes * 100 : 0;
+                                    Log($"📊 Retry progress: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({percent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                                });
+                            });
+
+                            bool success = await _protocol.UploadFileAsync(item.SourcePath, item.DestinationPath, progress, CancellationToken.None);
+                            
+                            if (success)
+                            {
+                                Log($"✅ Retry successful: {item.FileName}");
+                                
+                                // Remove from failed, add to completed
+                                _failedTransfers.Remove(item);
+                                _transferHistory.Remove(item);
+                                
+                                double avgSpeed = fileInfo.Length / 10.0 / (1024 * 1024); // Rough estimate
+                                AddToHistory("Upload", item.FileName, item.SourcePath, item.DestinationPath, fileInfo.Length, avgSpeed, "Success");
+                            }
+                            else
+                            {
+                                Log($"❌ Retry failed: {item.FileName}");
+                            }
+                        }
+                        else
+                        {
+                            Log($"⚠️ Source file not found: {item.SourcePath}");
+                            MessageBox.Show($"Source file not found:\n{item.SourcePath}", "File Not Found", MessageBoxButton.OK, MessageBoxImage.Warning);
+                        }
+                    }
+                    else if (item.Type == "Download")
+                    {
+                        // Retry download
+                        Log($"🔄 Retrying download: {item.FileName}");
+                        
+                        var saveDialog = new SaveFileDialog
+                        {
+                            FileName = item.FileName,
+                            Title = "Save Downloaded File (Retry)"
+                        };
+                        
+                        if (saveDialog.ShowDialog() == true)
+                        {
+                            var progress = new Progress<UploadProgress>(p =>
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    double percent = p.TotalBytes > 0 ? (double)p.BytesSent / p.TotalBytes * 100 : 0;
+                                    Log($"📊 Retry download progress: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({percent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                                });
+                            });
+
+                            bool success = await _protocol.DownloadFileAsync(item.SourcePath, saveDialog.FileName, progress);
+                            
+                            if (success)
+                            {
+                                Log($"✅ Retry download successful: {item.FileName}");
+                                
+                                // Remove from failed, add to completed
+                                _failedTransfers.Remove(item);
+                                _transferHistory.Remove(item);
+                                
+                                double avgSpeed = item.Size / 10.0 / (1024 * 1024); // Rough estimate
+                                AddToHistory("Download", item.FileName, item.SourcePath, saveDialog.FileName, item.Size, avgSpeed, "Success");
+                            }
+                            else
+                            {
+                                Log($"❌ Retry download failed: {item.FileName}");
+                            }
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Log($"❌ Retry error for {item.FileName}: {ex.Message}");
+                    MessageBox.Show($"Retry error for {item.FileName}:\n{ex.Message}", "Retry Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                }
+            }
+
+            Log($"✅ Retry operation completed");
+            MessageBox.Show("Retry operation completed. Check the log for details.", "Retry Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void RemoveFailedTransfers_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedItems = FailedTransfersListBox.SelectedItems.Cast<TransferHistoryItem>().ToList();
+            
+            if (selectedItems.Count == 0)
+            {
+                MessageBox.Show("No failed transfers selected.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            var result = MessageBox.Show($"Remove {selectedItems.Count} failed transfer(s) from history?", "Confirm Remove", MessageBoxButton.YesNo, MessageBoxImage.Question);
+            if (result == MessageBoxResult.Yes)
+            {
+                foreach (var item in selectedItems)
+                {
+                    _failedTransfers.Remove(item);
+                    _transferHistory.Remove(item);
+                }
+                
+                SaveTransferHistory();
+                Log($"🗑️ Removed {selectedItems.Count} failed transfer(s) from history");
+            }
+        }
     }
 
     public class LocalFileItem
@@ -2428,6 +2859,37 @@ namespace PS5Upload
         private string FormatSize(long bytes)
         {
             if (IsDirectory) return "";
+            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
+            double len = bytes;
+            int order = 0;
+            while (len >= 1024 && order < sizes.Length - 1)
+            {
+                order++;
+                len = len / 1024;
+            }
+            return $"{len:0.##} {sizes[order]}";
+        }
+    }
+
+    public class TransferHistoryItem
+    {
+        public DateTime Timestamp { get; set; }
+        public string Type { get; set; } = ""; // "Upload" or "Download"
+        public string FileName { get; set; } = "";
+        public string SourcePath { get; set; } = "";
+        public string DestinationPath { get; set; } = "";
+        public long Size { get; set; }
+        public double SpeedMBps { get; set; }
+        public string Status { get; set; } = ""; // "Success" or "Failed"
+        public string ErrorMessage { get; set; } = "";
+        
+        public string TimestampFormatted => Timestamp.ToString("yyyy-MM-dd HH:mm:ss");
+        public string SizeFormatted => FormatSize(Size);
+        public string SpeedFormatted => $"{SpeedMBps:F2} MB/s";
+        public string StatusIcon => Status == "Success" ? "✅" : "❌";
+
+        private string FormatSize(long bytes)
+        {
             string[] sizes = { "B", "KB", "MB", "GB", "TB" };
             double len = bytes;
             int order = 0;

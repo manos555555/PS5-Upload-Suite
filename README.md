@@ -2,14 +2,15 @@
 
 **By Manos**
 
-**Version 2.0.0 - Feature-Rich Release**
+**Version 2.1.0 - Performance & UX Release**
 
-Custom high-speed file transfer system for PS5 with etaHEN. Achieves **100+ MB/s** transfer speeds using a custom binary protocol.
+Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s** aggregate upload speeds using optimized parallel connections and direct syscalls.
 
-⭐ **NEW in v2.0.0:** 4 Major Features Added - Download Files, File Search, Favorites/Bookmarks, Multi-PS5 Support!
+⭐ **NEW in v2.1.0:** Massive Upload Speed Boost (88-110 MB/s), Transfer History with Auto-Clear, Maximized Window UI!
 
 ![PS5 Upload Client](screenshots/screenshot1.png)
 ![Upload in Progress](screenshots/screenshot2.png)
+![Transfer History & Multi-PS5 Support](screenshots/screenshot3.png)
 
 ---
 
@@ -20,21 +21,26 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **100+ MB/s
 - **Port:** 9113
 - **Protocol:** Custom binary (optimized for speed)
 - **Features:**
-  - 4MB socket buffers
+  - 16MB socket buffers (optimized for maximum throughput)
   - SO_NOSIGPIPE enabled
   - TCP_NODELAY for low latency
-  - Direct disk writes (no temp files)
+  - Direct `write()` syscalls (bypasses stdio buffering for 80-110 MB/s upload)
+  - Per-file mutex locking (parallel writes without race conditions)
+  - File pre-allocation for large files (reduces fragmentation)
   - Multi-threaded client handling
 
 ### 2. Windows GUI Client
 - **File:** `client/bin/Release/net6.0-windows/win-x64/publish/PS5Upload.exe`
 - **Framework:** .NET 6.0 WPF
 - **Features:**
-  - Modern dark theme UI
+  - Modern dark theme UI (opens maximized for better visibility)
   - Drag & drop file/folder upload
   - Browse PS5 filesystem
-  - Real-time upload progress
-  - Speed indicator (MB/s)
+  - Real-time upload progress with speed tracking
+  - 8 parallel large file uploads (optimal aggregate throughput)
+  - 128MB TCP buffers for maximum network performance
+  - Transfer History with success/failed tracking
+  - Auto-clear history on startup option
   - Storage space display
   - Recursive folder upload
 
@@ -80,36 +86,44 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **100+ MB/s
 ✅ **Robust Error Handling** - Graceful failures  
 
 ### Windows Client
-✅ **Modern UI** - Dark theme, clean design  
+✅ **Modern UI** - Dark theme, maximized window for better visibility  
 ✅ **Drag & Drop** - Files and folders  
 ✅ **Browse PS5** - Navigate filesystem  
-✅ **Real-time Progress** - Speed & percentage  
+✅ **Real-time Progress** - Speed & percentage tracking  
+✅ **Optimized Upload** - 8 parallel connections for 88-110 MB/s aggregate speed (NEW v2.1)  
+✅ **Transfer History** - Track all uploads/downloads with success/failed status (NEW v2.1)  
+✅ **Auto-Clear History** - Optional auto-clear on startup (NEW v2.1)  
 ✅ **Folder Upload** - Recursive directory upload  
 ✅ **Storage Info** - Free space display  
-✅ **Download Files** - Download from PS5 to PC (NEW v2.0)  
-✅ **File Search** - Real-time filtering of PS5 files (NEW v2.0)  
-✅ **Favorites/Bookmarks** - Quick navigation to saved paths (NEW v2.0)  
-✅ **Multi-PS5 Support** - Save and switch between multiple PS5 profiles (NEW v2.0)  
+✅ **Download Files** - Download from PS5 to PC (v2.0)  
+✅ **File Search** - Real-time filtering of PS5 files (v2.0)  
+✅ **Favorites/Bookmarks** - Quick navigation to saved paths (v2.0)  
+✅ **Multi-PS5 Support** - Save and switch between multiple PS5 profiles (v2.0)  
 
 ---
 
 ## 📊 Performance
 
-### v1.3.0 Tested Results:
-- ✅ **42,801 files** uploaded successfully
+### v2.1.0 Optimized Results:
+- ✅ **88-110 MB/s** aggregate upload speed (8 parallel connections)
+- ✅ **11-14 MB/s** per file sustained (Ethernet)
+- ✅ **Peak bursts:** 610 MB/s - 2.05 GB/s (disk cache)
+- ✅ **Direct syscalls** - Bypasses stdio buffering for maximum speed
 - ✅ **Zero errors** - 100% success rate
-- ✅ **60-150 MB/s** sustained throughput
-- ✅ **Peak:** 190 MB/s per connection
 - ✅ **Fully responsive UI** throughout upload
 - ✅ **No memory leaks** - stable operation
 
-| Network | Expected Speed |
-|---------|----------------|
-| **Gigabit Ethernet** | 100-120 MB/s |
-| **WiFi 6 (5GHz)** | 60-80 MB/s |
-| **WiFi 5 (5GHz)** | 40-60 MB/s |
+### Previous Results (v1.3.0):
+- ✅ **42,801 files** uploaded successfully
+- ✅ **60-150 MB/s** sustained throughput
 
-**Note:** Speeds depend on network quality and PS5 disk performance.
+| Network | Expected Upload Speed | Expected Download Speed |
+|---------|----------------------|------------------------|
+| **Gigabit Ethernet** | 88-110 MB/s (aggregate) | 100-120 MB/s |
+| **WiFi 6 (5GHz)** | 32-70 MB/s (aggregate) | 60-80 MB/s |
+| **WiFi 5 (5GHz)** | 20-50 MB/s (aggregate) | 40-60 MB/s |
+
+**Note:** Upload speeds depend on network quality and PS5 disk write performance. WiFi has ~40-60% overhead compared to Ethernet.
 
 ---
 
@@ -188,6 +202,42 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
 - Server only accepts connections from local network
 - No authentication required (local network only)
 - SHUTDOWN command only works from localhost
+
+---
+
+## 📝 What's New in v2.1.0
+
+### 🚀 Performance Optimizations:
+
+#### 1. ⚡ Massive Upload Speed Boost (88-110 MB/s)
+- **Server-side:** Replaced `fwrite()` with direct `write()` syscalls
+- **Client-side:** 8 parallel large file uploads (optimal for PS5 disk)
+- **Result:** 80-110 MB/s aggregate upload speed on Gigabit Ethernet
+- **Peak bursts:** Up to 2.05 GB/s when hitting disk cache
+- **Per-file:** 11-14 MB/s sustained per connection
+
+#### 2. 📊 Transfer History
+- Complete history of all uploads and downloads
+- Success/Failed status tracking with error messages
+- Speed statistics (average, min, max)
+- Export to CSV/JSON for analysis
+- Persistent storage across sessions
+
+#### 3. 🔄 Auto-Clear History on Startup
+- Optional checkbox to clear history automatically
+- Useful for keeping UI clean between sessions
+- Setting saved in `ps5_upload_settings.json`
+
+#### 4. 🖥️ Maximized Window UI
+- Application opens in full-screen mode by default
+- Better visibility for large file transfers
+- Can be resized/restored as needed
+
+### Technical Improvements:
+- ✅ **16MB socket buffers** (up from 4MB) for maximum throughput
+- ✅ **Per-file mutex locking** - Parallel writes without race conditions
+- ✅ **File pre-allocation** - Reduces disk fragmentation for large files
+- ✅ **Direct syscalls** - Bypasses stdio buffering overhead
 
 ---
 
