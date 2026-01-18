@@ -22,6 +22,7 @@ namespace PS5Upload
         StartUpload = 0x10,
         UploadChunk = 0x11,
         EndUpload = 0x12,
+        DownloadFile = 0x13,
         Shutdown = 0xFF
     }
 
@@ -39,7 +40,7 @@ namespace PS5Upload
     {
         private TcpClient? _client;
         private NetworkStream? _stream;
-        private const int BufferSize = 32 * 1024 * 1024; // 32MB for maximum throughput
+        private const int BufferSize = 4 * 1024 * 1024; // 4MB chunks - MUST match payload BUFFER_SIZE
 
         public bool IsConnected => _client?.Connected ?? false;
 
@@ -130,7 +131,7 @@ namespace PS5Upload
             return (response, data);
         }
 
-        private async Task ReadExactAsync(byte[] buffer, int count, int timeoutMs = 30000)
+        private async Task ReadExactAsync(byte[] buffer, int count, int timeoutMs = 120000)
         {
             if (_stream == null) throw new InvalidOperationException("Not connected");
 
@@ -142,7 +143,13 @@ namespace PS5Upload
                 while (offset < count)
                 {
                     int read = await _stream.ReadAsync(buffer, offset, count - offset, cts.Token);
-                    if (read == 0) throw new IOException("Connection closed");
+                    if (read == 0)
+                    {
+                        // Give PS5 a moment to recover before declaring connection dead
+                        await Task.Delay(100);
+                        read = await _stream.ReadAsync(buffer, offset, count - offset, cts.Token);
+                        if (read == 0) throw new IOException("Connection closed");
+                    }
                     offset += read;
                 }
             }
@@ -257,7 +264,7 @@ namespace PS5Upload
             return response == Response.Ok;
         }
 
-        public event Action<string> OnProgressMessage;
+        public event Action<string>? OnProgressMessage;
 
         public async Task<bool> DeleteDirAsync(string path)
         {
@@ -313,7 +320,8 @@ namespace PS5Upload
             }
             
             // Give server a moment to fully close the deletion thread
-            await Task.Delay(100);
+            // CRITICAL: Increased delay to prevent race condition with next delete
+            await Task.Delay(500);
             
             return true;
         }
@@ -405,7 +413,20 @@ namespace PS5Upload
                     
                     if (_stream == null) return false;
                     
-                    await _stream.WriteAsync(sendBuffer, 0, 5 + bytesRead, cancellationToken);
+                    // FIX: Add timeout to WriteAsync to prevent hanging if PS5 becomes unresponsive
+                    // 30 second timeout per chunk write - should be more than enough for 4MB
+                    using var writeTimeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                    using var linkedCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, writeTimeout.Token);
+                    
+                    try
+                    {
+                        await _stream.WriteAsync(sendBuffer, 0, 5 + bytesRead, linkedCts.Token);
+                    }
+                    catch (OperationCanceledException) when (writeTimeout.IsCancellationRequested)
+                    {
+                        // Write timeout - PS5 is unresponsive
+                        return false;
+                    }
                     
                     totalSent += bytesRead;
                     bytesRemaining -= bytesRead;
@@ -435,18 +456,101 @@ namespace PS5Upload
                 }
             }
 
-            // Send END_UPLOAD - fire-and-forget for maximum speed
-            // Don't wait for response to avoid PS5 payload bottleneck
+            // Send END_UPLOAD and wait for response
+            // CRITICAL: Must wait for response to avoid protocol desync on chunked uploads
             try
             {
                 await SendCommandAsync(Command.EndUpload);
-                // Immediately return success without waiting for response
-                // This eliminates the PS5 response handling bottleneck
-                return true;
+                var (endResponse, _) = await ReceiveResponseAsync();
+                return endResponse == Response.Ok;
             }
             catch
             {
-                return true; // Assume success if connection issues
+                return false; // Connection issue means upload failed
+            }
+        }
+
+        public async Task<bool> DownloadFileAsync(string remotePath, string localPath, IProgress<UploadProgress>? progress = null, CancellationToken cancellationToken = default)
+        {
+            try
+            {
+                // Send download command
+                byte[] pathBytes = Encoding.UTF8.GetBytes(remotePath);
+                await SendCommandAsync(Command.DownloadFile, pathBytes);
+                
+                // Receive response header (5 bytes: 1 response + 4 data_len)
+                byte[] header = new byte[5];
+                await ReadExactAsync(header, 5);
+                
+                Response response = (Response)header[0];
+                uint dataLen = BitConverter.ToUInt32(header, 1);
+                
+                // Check if error response
+                if (response == Response.Error)
+                {
+                    if (dataLen > 0)
+                    {
+                        byte[] errorMsg = new byte[dataLen];
+                        await ReadExactAsync(errorMsg, (int)dataLen);
+                    }
+                    return false;
+                }
+                
+                // Expecting RESP_DATA with 8-byte file size
+                if (response != Response.Data || dataLen != 8)
+                {
+                    return false;
+                }
+                
+                // Read file size (8 bytes)
+                byte[] sizeBytes = new byte[8];
+                await ReadExactAsync(sizeBytes, 8);
+                long fileSize = BitConverter.ToInt64(sizeBytes, 0);
+                
+                // Now read raw file data directly from socket
+                using var fs = new FileStream(localPath, FileMode.Create, FileAccess.Write, FileShare.None, BufferSize);
+                
+                byte[] buffer = new byte[BufferSize];
+                long totalReceived = 0;
+                var startTime = DateTime.Now;
+                
+                while (totalReceived < fileSize)
+                {
+                    if (cancellationToken.IsCancellationRequested) return false;
+                    
+                    int toRead = (int)Math.Min(BufferSize, fileSize - totalReceived);
+                    int received = await _stream!.ReadAsync(buffer, 0, toRead, cancellationToken);
+                    
+                    if (received == 0) break;
+                    
+                    await fs.WriteAsync(buffer, 0, received, cancellationToken);
+                    totalReceived += received;
+                    
+                    // Report progress every 5MB or at completion
+                    if (totalReceived % (5 * 1024 * 1024) < BufferSize || totalReceived == fileSize)
+                    {
+                        var elapsed = DateTime.Now - startTime;
+                        double speed = elapsed.TotalSeconds > 0 ? totalReceived / elapsed.TotalSeconds : 0;
+                        
+                        progress?.Report(new UploadProgress
+                        {
+                            BytesSent = totalReceived,
+                            TotalBytes = fileSize,
+                            SpeedBytesPerSecond = speed,
+                            AverageSpeedBytesPerSecond = speed,
+                            ElapsedTime = elapsed,
+                            EstimatedTimeRemaining = speed > 0 ? TimeSpan.FromSeconds((fileSize - totalReceived) / speed) : TimeSpan.Zero,
+                            CurrentFileName = Path.GetFileName(localPath)
+                        });
+                    }
+                }
+                
+                return totalReceived == fileSize;
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Download error: {ex.Message}");
+                return false;
             }
         }
 

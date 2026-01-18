@@ -2,11 +2,11 @@
 
 **By Manos**
 
-**Version 1.3.0 - Stable Release**
+**Version 2.0.0 - Feature-Rich Release**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **100+ MB/s** transfer speeds using a custom binary protocol.
 
-⭐ **NEW in v1.3.0:** Complete stability overhaul - **42,801+ files uploaded with ZERO errors!**
+⭐ **NEW in v2.0.0:** 4 Major Features Added - Download Files, File Search, Favorites/Bookmarks, Multi-PS5 Support!
 
 ![PS5 Upload Client](screenshots/screenshot1.png)
 ![Upload in Progress](screenshots/screenshot2.png)
@@ -86,6 +86,10 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **100+ MB/s
 ✅ **Real-time Progress** - Speed & percentage  
 ✅ **Folder Upload** - Recursive directory upload  
 ✅ **Storage Info** - Free space display  
+✅ **Download Files** - Download from PS5 to PC (NEW v2.0)  
+✅ **File Search** - Real-time filtering of PS5 files (NEW v2.0)  
+✅ **Favorites/Bookmarks** - Quick navigation to saved paths (NEW v2.0)  
+✅ **Multi-PS5 Support** - Save and switch between multiple PS5 profiles (NEW v2.0)  
 
 ---
 
@@ -154,6 +158,7 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
 - `START_UPLOAD` - Begin file upload
 - `UPLOAD_CHUNK` - Upload file chunk
 - `END_UPLOAD` - Finish upload
+- `DOWNLOAD_FILE` - Download file from PS5 (NEW v2.0)
 - `SHUTDOWN` - Shutdown server
 
 ---
@@ -186,15 +191,38 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
 
 ---
 
-## 📝 What's New in v1.3.0
+## 📝 What's New in v2.0.0
 
-See [CHANGELOG.md](CHANGELOG.md) for complete list of all 15 bug fixes.
+### 🎉 4 Major New Features:
 
-### Highlights:
+#### 1. 📥 Download Files (PS5 → PC)
+- Right-click any file → "⬇️ Download to PC"
+- Save file dialog for destination selection
+- Real-time progress tracking with speed display
+- Optimized with sendfile for maximum speed
+
+#### 2. 🔍 File Search
+- Search box in PS5 Files panel
+- Real-time filtering as you type
+- Case-insensitive search
+- Quick "Clear" button to reset
+
+#### 3. ⭐ Favorites/Bookmarks
+- Save frequently used PS5 paths
+- Quick dropdown navigation
+- Add/Remove favorite paths
+- Persistent storage in JSON
+
+#### 4. 🎮 Multi-PS5 Support
+- Save multiple PS5 profiles (IP + name)
+- Quick switch between different PS5 consoles
+- Dropdown profile selector
+- Persistent profile storage
+
+### Previous Stability (v1.3.0):
 - ✅ **Zero connection drops** - 5 minute socket timeout + aggressive keepalive
 - ✅ **Fully responsive UI** - Async updates + throttled logging
 - ✅ **No memory leaks** - Proper resource disposal
-- ✅ **Optimal stability** - 6 parallel single-connection uploads
 - ✅ **Tested:** 42,801 files uploaded with 100% success rate
 
 ---

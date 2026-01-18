@@ -22,7 +22,7 @@
 #include <ifaddrs.h>
 
 #define SERVER_PORT 9113
-#define BUFFER_SIZE (8 * 1024 * 1024)
+#define BUFFER_SIZE (4 * 1024 * 1024)  // 4MB - MUST match client BufferSize
 #define MAX_PATH 2048
 #define DISK_WORKER_COUNT 4
 #define QUEUE_MAX_SIZE 32
@@ -107,6 +107,7 @@ void release_file_mutex(const char *path) {
 #define CMD_START_UPLOAD 0x10
 #define CMD_UPLOAD_CHUNK 0x11
 #define CMD_END_UPLOAD 0x12
+#define CMD_DOWNLOAD_FILE 0x13
 #define CMD_SHUTDOWN 0xFF
 
 // Protocol responses
@@ -508,22 +509,33 @@ void handle_list_dir(client_session_t *session, const char *path) {
             break;
         }
         
-        // Determine type - use d_type if available, otherwise fall back to stat()
+        // Determine type and get file size
         uint8_t type = 0;
+        uint64_t size = 0;
+        uint64_t timestamp = 0;
+        
+        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        struct stat st;
+        
         if (entry->d_type == DT_DIR) {
             type = 1;
         } else if (entry->d_type == DT_UNKNOWN) {
             // d_type not supported on this filesystem - use stat() as fallback
-            snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
-            struct stat st;
-            if (stat(full_path, &st) == 0 && S_ISDIR(st.st_mode)) {
-                type = 1;
+            if (stat(full_path, &st) == 0) {
+                if (S_ISDIR(st.st_mode)) {
+                    type = 1;
+                } else {
+                    size = st.st_size;
+                    timestamp = st.st_mtime;
+                }
+            }
+        } else {
+            // Regular file - get size
+            if (stat(full_path, &st) == 0) {
+                size = st.st_size;
+                timestamp = st.st_mtime;
             }
         }
-        // else: DT_REG or other = file (type = 0)
-        
-        uint64_t size = 0;      // Don't need file size for browsing
-        uint64_t timestamp = 0; // Don't need timestamp for browsing
         
         *ptr++ = type;
         memcpy(ptr, &name_len, 2);
@@ -821,29 +833,47 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     pthread_mutex_lock(session->file_mutex);
     
     // Open file for writing
+    // For chunked uploads, we need to pre-allocate the file on first chunk
+    // and open with r+b for subsequent chunks
     if (chunk_offset > 0) {
-        // Chunk mode: open existing file or create if needed
+        // Subsequent chunk: open existing file
         session->upload_fp = fopen(path, "r+b");
-        if (!session->upload_fp) {
-            // File doesn't exist, create it with full size
-            session->upload_fp = fopen(path, "wb");
-            if (session->upload_fp) {
-                // Allocate full file size
-                if (fseeko(session->upload_fp, file_size - 1, SEEK_SET) == 0) {
-                    fputc(0, session->upload_fp);
-                    fflush(session->upload_fp);
-                }
-                fclose(session->upload_fp);
-                session->upload_fp = fopen(path, "r+b");
-            }
-        }
         if (session->upload_fp) {
             // Seek to chunk offset
             fseeko(session->upload_fp, chunk_offset, SEEK_SET);
         }
     } else {
-        // Normal mode: create new file
+        // First chunk or small file: create new file
+        // Check if this is a chunked upload (file_size > chunk that will be sent)
+        // We pre-allocate for large files to ensure r+b works for subsequent chunks
         session->upload_fp = fopen(path, "wb");
+        if (session->upload_fp && file_size > 100 * 1024 * 1024) {
+            // Large file - pre-allocate full size for chunked upload
+            // FIX: Check if pre-allocation succeeds (disk might be full!)
+            int prealloc_ok = 0;
+            if (fseeko(session->upload_fp, file_size - 1, SEEK_SET) == 0) {
+                if (fputc(0, session->upload_fp) != EOF) {
+                    if (fflush(session->upload_fp) == 0) {
+                        prealloc_ok = 1;
+                    }
+                }
+            }
+            
+            if (!prealloc_ok) {
+                // Pre-allocation failed - likely disk full
+                fclose(session->upload_fp);
+                session->upload_fp = NULL;
+                pthread_mutex_unlock(session->file_mutex);
+                release_file_mutex(path);
+                session->file_mutex = NULL;
+                unlink(path); // Remove partial file
+                send_error(session->sock, "Disk full - cannot pre-allocate file");
+                return;
+            }
+            
+            // Seek back to beginning
+            fseeko(session->upload_fp, 0, SEEK_SET);
+        }
     }
     
     pthread_mutex_unlock(session->file_mutex);
@@ -855,7 +885,7 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
         return;
     }
     
-    // Use HUGE buffer (8MB) for maximum write speed
+    // Use 4MB buffer for write speed
     setvbuf(session->upload_fp, NULL, _IOFBF, BUFFER_SIZE);
     
     strncpy(session->upload_path, path, sizeof(session->upload_path) - 1);
@@ -863,7 +893,7 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     session->upload_received = chunk_offset;
     
     // Increase socket receive buffer for this upload session
-    int huge_buf = 8 * 1024 * 1024; // 8MB receive buffer
+    int huge_buf = 4 * 1024 * 1024; // 4MB receive buffer - matches client
     setsockopt(session->sock, SOL_SOCKET, SO_RCVBUF, &huge_buf, sizeof(huge_buf));
     
     send_response(session->sock, RESP_READY, NULL, 0);
@@ -921,6 +951,66 @@ void handle_end_upload(client_session_t *session) {
     chmod(session->upload_path, 0777);
     
     send_ok(session->sock, "Upload complete");
+}
+
+// Handle DOWNLOAD_FILE
+void handle_download_file(client_session_t *session, const char *path) {
+    int fd = open(path, O_RDONLY);
+    if (fd < 0) {
+        send_error(session->sock, "Cannot open file");
+        return;
+    }
+    
+    struct stat st;
+    if (fstat(fd, &st) != 0) {
+        close(fd);
+        send_error(session->sock, "Cannot stat file");
+        return;
+    }
+    
+    // Send file size first
+    uint64_t file_size = st.st_size;
+    send_response(session->sock, RESP_DATA, &file_size, sizeof(file_size));
+    
+    // Use sendfile for zero-copy transfer (same as FTP server optimization)
+    #ifdef __FreeBSD__
+    off_t offset = 0;
+    off_t sbytes = 0;
+    
+    // Send in chunks for progress tracking
+    const off_t CHUNK_SIZE = 100 * 1024 * 1024; // 100MB chunks
+    while (offset < file_size) {
+        off_t to_send = (file_size - offset > CHUNK_SIZE) ? CHUNK_SIZE : (file_size - offset);
+        sbytes = 0;
+        
+        int result = sendfile(fd, session->sock, offset, to_send, NULL, &sbytes, 0);
+        if (result < 0 && errno != EAGAIN) {
+            close(fd);
+            return;
+        }
+        
+        offset += sbytes;
+        if (sbytes == 0) break;
+    }
+    #else
+    // Fallback for non-FreeBSD systems
+    char *buffer = malloc(BUFFER_SIZE);
+    if (buffer) {
+        ssize_t n;
+        while ((n = read(fd, buffer, BUFFER_SIZE)) > 0) {
+            ssize_t sent = 0;
+            while (sent < n) {
+                ssize_t s = send(session->sock, buffer + sent, n - sent, 0);
+                if (s <= 0) break;
+                sent += s;
+            }
+            if (sent != n) break;
+        }
+        free(buffer);
+    }
+    #endif
+    
+    close(fd);
 }
 
 // Handle client
@@ -1025,6 +1115,11 @@ void *client_thread(void *arg) {
             case CMD_END_UPLOAD:
                 handle_end_upload(session);
                 break;
+            case CMD_DOWNLOAD_FILE:
+                if (data) {
+                    handle_download_file(session, (const char *)data);
+                }
+                break;
             case CMD_SHUTDOWN:
                 send_ok(session->sock, "Shutting down");
                 free(buffer);
@@ -1074,8 +1169,8 @@ int main() {
     int no_sigpipe = 1;
     setsockopt(server_sock, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
     
-    // 8MB buffers for sustained high throughput
-    int buf_size = 8 * 1024 * 1024;
+    // 4MB buffers - matches client
+    int buf_size = 4 * 1024 * 1024;
     setsockopt(server_sock, SOL_SOCKET, SO_RCVBUF, &buf_size, sizeof(buf_size));
     setsockopt(server_sock, SOL_SOCKET, SO_SNDBUF, &buf_size, sizeof(buf_size));
     
@@ -1128,8 +1223,8 @@ int main() {
         // Aggressive TCP socket options for sustained high speed
         setsockopt(client_sock, SOL_SOCKET, SO_NOSIGPIPE, &no_sigpipe, sizeof(no_sigpipe));
         
-        // Increase buffers to 8MB for maximum throughput
-        int large_buf = 8 * 1024 * 1024;
+        // Increase buffers to 4MB - matches client
+        int large_buf = 4 * 1024 * 1024;
         setsockopt(client_sock, SOL_SOCKET, SO_RCVBUF, &large_buf, sizeof(large_buf));
         setsockopt(client_sock, SOL_SOCKET, SO_SNDBUF, &large_buf, sizeof(large_buf));
         

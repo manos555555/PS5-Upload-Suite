@@ -8,7 +8,7 @@ echo ""
 
 echo "[+] Compiling..."
 rm -f ps5_upload_server.elf
-/home/hackman/ps5sdk_copy/bin/prospero-clang -Wall -O3 -pthread -o ps5_upload_server.elf main.c
+/opt/ps5-payload-sdk/bin/prospero-clang -Wall -O3 -pthread -o ps5_upload_server.elf main.c
 
 if [ -f "ps5_upload_server.elf" ]; then
     echo ""

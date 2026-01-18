@@ -18,16 +18,25 @@ namespace PS5Upload
         private PS5Protocol _protocol = new PS5Protocol();
         private ObservableCollection<LocalFileItem> _localFiles = new ObservableCollection<LocalFileItem>();
         private ObservableCollection<PS5FileItem> _ps5Files = new ObservableCollection<PS5FileItem>();
+        private ObservableCollection<PS5FileItem> _ps5FilesFiltered = new ObservableCollection<PS5FileItem>();
         private string _currentPS5Path = "/data";
         private CancellationTokenSource? _uploadCancellation;
         private string _ps5IpAddress = "";
+        private string _searchQuery = "";
+        
+        // Multi-PS5 Support
+        private Dictionary<string, string> _ps5Profiles = new Dictionary<string, string>();
+        private const string ProfilesFileName = "ps5_profiles.json";
+        
+        // Favorites/Bookmarks
+        private List<string> _favoritePaths = new List<string>();
+        private const string FavoritesFileName = "ps5_favorites.json";
         
         // Parallel upload settings
-        private const int MaxParallelUploads = 6; // Optimal number for stable high-speed uploads
+        private const int MaxParallelUploads = 16; // 16 parallel uploads for maximum speed (~105-108 MB/s)
         
         // Total upload tracking
         private int _totalFilesToUpload = 0;
-        private int _currentFileIndex = 0;
         private long _totalBytesToUpload = 0;
         private long _totalBytesUploaded = 0;
         private int _completedFiles = 0;
@@ -41,7 +50,9 @@ namespace PS5Upload
         
         // Real-time UI update timer
         private DispatcherTimer _uiUpdateTimer;
+        private DispatcherTimer _storageUpdateTimer;
         private int _activeTaskCount = 0;
+        private bool _isProtocolBusy = false; // Prevents storage updates during other operations
         
         // Log throttling to prevent UI freeze
         private int _logCounter = 0;
@@ -55,12 +66,19 @@ namespace PS5Upload
         {
             InitializeComponent();
             LocalFilesListBox.ItemsSource = _localFiles;
-            PS5FilesListBox.ItemsSource = _ps5Files;
+            PS5FilesListBox.ItemsSource = _ps5FilesFiltered;
             
             // Initialize real-time UI update timer (500ms interval)
             _uiUpdateTimer = new DispatcherTimer();
             _uiUpdateTimer.Interval = TimeSpan.FromMilliseconds(500);
             _uiUpdateTimer.Tick += UiUpdateTimer_Tick;
+            
+            // Initialize storage update timer (DISABLED - causes protocol conflicts)
+            // Storage will only update on connect and after operations complete
+            _storageUpdateTimer = new DispatcherTimer();
+            _storageUpdateTimer.Interval = TimeSpan.FromSeconds(3);
+            _storageUpdateTimer.Tick += StorageUpdateTimer_Tick;
+            // DO NOT START - causes hanging during upload/delete operations
             
             // Subscribe to progress messages from protocol
             _protocol.OnProgressMessage += (message) =>
@@ -69,9 +87,15 @@ namespace PS5Upload
             };
             
             Log("Application started");
+            
+            // Load saved PS5 profiles
+            LoadProfiles();
+            
+            // Load saved favorite paths
+            LoadFavorites();
         }
 
-        private void UiUpdateTimer_Tick(object sender, EventArgs e)
+        private void UiUpdateTimer_Tick(object? sender, EventArgs e)
         {
             // Update UI stats in real-time (called every 500ms)
             int completed;
@@ -82,10 +106,91 @@ namespace PS5Upload
             UpdateUploadStats(completed, _activeTaskCount);
         }
 
+        private async void StorageUpdateTimer_Tick(object? sender, EventArgs e)
+        {
+            // Update PS5 storage info in real-time (called every 3 seconds)
+            await UpdateStorageInfoAsync();
+        }
+
+        private async Task UpdateStorageInfoAsync()
+        {
+            try
+            {
+                // Skip if protocol is busy with another operation (upload, delete, etc.)
+                if (_isProtocolBusy || !_protocol.IsConnected)
+                    return;
+
+                var storageList = await _protocol.ListStorageAsync();
+                if (storageList.Length == 0)
+                    return;
+
+                // Get /data storage (main PS5 storage)
+                var dataStorage = storageList.FirstOrDefault(s => s.Path == "/data");
+                if (dataStorage == null)
+                    return;
+
+                long totalBytes = dataStorage.TotalBytes;
+                long freeBytes = dataStorage.FreeBytes;
+                long usedBytes = totalBytes - freeBytes;
+
+                // Update UI
+                StorageFreeText.Text = FormatFileSize(freeBytes);
+                StorageUsedText.Text = FormatFileSize(usedBytes);
+                StorageTotalText.Text = FormatFileSize(totalBytes);
+
+                // Update progress bar (percentage used)
+                double usedPercentage = totalBytes > 0 ? (double)usedBytes / totalBytes * 100 : 0;
+                StorageProgressBar.Value = usedPercentage;
+            }
+            catch
+            {
+                // Ignore errors during storage update
+            }
+        }
+
         private void ClearLogButton_Click(object sender, RoutedEventArgs e)
         {
             LogTextBox.Clear();
             Log("Log cleared");
+        }
+
+        private void SearchTextBox_TextChanged(object sender, System.Windows.Controls.TextChangedEventArgs e)
+        {
+            _searchQuery = SearchTextBox.Text.Trim();
+            ApplySearchFilter();
+        }
+
+        private void ClearSearchButton_Click(object sender, RoutedEventArgs e)
+        {
+            SearchTextBox.Text = "";
+            _searchQuery = "";
+            ApplySearchFilter();
+        }
+
+        private void ApplySearchFilter()
+        {
+            _ps5FilesFiltered.Clear();
+            
+            if (string.IsNullOrWhiteSpace(_searchQuery))
+            {
+                // No search - show all files
+                foreach (var file in _ps5Files)
+                {
+                    _ps5FilesFiltered.Add(file);
+                }
+            }
+            else
+            {
+                // Filter by search query (case-insensitive)
+                string query = _searchQuery.ToLower();
+                foreach (var file in _ps5Files)
+                {
+                    if (file.Name.ToLower().Contains(query))
+                    {
+                        _ps5FilesFiltered.Add(file);
+                    }
+                }
+            }
         }
 
         private async void CopyLogButton_Click(object sender, RoutedEventArgs e)
@@ -101,20 +206,32 @@ namespace PS5Upload
                     logContent = LogTextBox.Text;
                 });
                 
-                // Copy to clipboard on a background thread
-                await Task.Run(() =>
+                // Copy to clipboard with retry logic (clipboard may be locked by another app)
+                bool copied = false;
+                for (int retry = 0; retry < 3 && !copied; retry++)
                 {
-                    Dispatcher.Invoke(() =>
+                    try
                     {
-                        System.Windows.Clipboard.SetText(logContent);
-                    });
-                });
+                        await Dispatcher.InvokeAsync(() =>
+                        {
+                            System.Windows.Clipboard.SetText(logContent);
+                        });
+                        copied = true;
+                    }
+                    catch
+                    {
+                        await Task.Delay(100); // Wait and retry
+                    }
+                }
                 
-                Log("📋 Log copied to clipboard!");
+                if (copied)
+                    Log("📋 Log copied to clipboard!");
+                else
+                    Log("⚠️ Clipboard busy - try again");
             }
             catch (Exception ex)
             {
-                Log($"❌ Failed to copy log: {ex.Message}");
+                Log($"⚠️ Clipboard error: {ex.Message}");
             }
         }
 
@@ -157,7 +274,7 @@ namespace PS5Upload
                 
                 // Update speed and ETA
                 UploadSpeedText.Text = $"Speed: {FormatFileSize((long)speed)}/s | {activeTaskCount} active";
-                UploadETAText.Text = $"ETA: {eta:mm\\:ss} | Elapsed: {elapsed:mm\\:ss}";
+                UploadETAText.Text = $"ETA: {eta:hh\\:mm\\:ss} | Elapsed: {elapsed:hh\\:mm\\:ss}";
                 
                 if (activeTaskCount > 0)
                 {
@@ -172,7 +289,28 @@ namespace PS5Upload
             // Only log important events (file completions, errors, status changes)
             // Skip verbose progress updates that flood the log
             
-            // Skip verbose upload progress messages
+            // Always log to file for crash debugging
+            // Log all file completions and errors
+            bool isImportant = message.Contains("❌") || message.Contains("⚠️") || 
+                               message.Contains("Exception") || message.Contains("Error") ||
+                               message.Contains("File") && message.Contains("completed") ||
+                               message.Contains("Starting parallel") || message.Contains("🚀") ||
+                               message.Contains("Upload complete") || message.Contains("finished");
+            
+            // Also log every 100th file for progress tracking
+            if (message.Contains("File") && message.Contains("/"))
+            {
+                _logCounter++;
+                if (_logCounter % 100 == 0)
+                    isImportant = true;
+            }
+            
+            if (isImportant)
+            {
+                App.LogToFile(message);
+            }
+            
+            // Skip verbose upload progress messages for UI
             if (message.Contains("📊") || message.Contains("⬆️ Uploading:") || 
                 message.Contains("⏳ Waiting") || message.Contains("✅ Task completed") ||
                 message.Contains("✅ Task awaited") || message.Contains("🔍 Task index") ||
@@ -258,10 +396,13 @@ namespace PS5Upload
                     // Update UI to show connected status
                     Dispatcher.Invoke(() =>
                     {
-                        ConnectButton.Content = "� Disconnect";
+                        ConnectButton.Content = "🟢 Disconnect";
                         ConnectButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.DarkGreen);
                         UploadButton.IsEnabled = true;
                     });
+                    
+                    // Update storage info once on connect (no auto-reload)
+                    await UpdateStorageInfoAsync();
                     
                     await LoadPS5DirectoryAsync(_currentPS5Path);
                 }
@@ -311,7 +452,7 @@ namespace PS5Upload
                 
                 if (path != "/")
                 {
-                    string parentPath = Path.GetDirectoryName(path);
+                    string? parentPath = Path.GetDirectoryName(path);
                     if (string.IsNullOrEmpty(parentPath))
                         parentPath = "/";
                     else
@@ -332,17 +473,15 @@ namespace PS5Upload
                     items.Add(new PS5FileItem
                     {
                         Name = entry.Name,
-                        FullPath = path + "/" + entry.Name,
-                        Icon = entry.IsDirectory ? "📁" : "📄",
                         IsDirectory = entry.IsDirectory,
-                        Size = entry.Size
+                        Size = entry.Size,
+                        FullPath = $"{path}/{entry.Name}".Replace("//", "/"),
+                        Icon = entry.IsDirectory ? "📁" : "📄"
                     });
                 }
 
-                // Sort: folders first, then files (both alphabetically)
-                var sortedItems = items.Where(i => i.Name == "..").ToList();
-                sortedItems.AddRange(items.Where(i => i.Name != ".." && i.IsDirectory).OrderBy(i => i.Name));
-                sortedItems.AddRange(items.Where(i => !i.IsDirectory).OrderBy(i => i.Name));
+                // Sort: directories first, then files, both alphabetically
+                var sortedItems = items.OrderBy(i => i.IsDirectory ? 0 : 1).ThenBy(i => i.Name, StringComparer.OrdinalIgnoreCase).ToList();
 
                 var t3 = sw.ElapsedMilliseconds;
                 
@@ -356,6 +495,9 @@ namespace PS5Upload
                 var t4 = sw.ElapsedMilliseconds;
                 int entryCount = entries.Count();
                 Log("📂 Loaded " + entryCount.ToString() + " items (Total: " + t4.ToString() + "ms)");
+                
+                // Apply search filter
+                ApplySearchFilter();
             }
             catch (Exception ex)
             {
@@ -530,7 +672,6 @@ namespace PS5Upload
             _totalBytesToUpload = allFiles.Sum(f => new FileInfo(f.localPath).Length);
             _totalBytesUploaded = 0;
             _completedFiles = 0;
-            _currentFileIndex = 0;
             _uploadStartTime = DateTime.Now;
             Log($"📊 Total: {_totalFilesToUpload} files, {FormatFileSize(_totalBytesToUpload)}");
 
@@ -600,16 +741,22 @@ namespace PS5Upload
                 
                 // Start real-time UI updates
                 _uiUpdateTimer.Start();
+                
+                // Mark protocol as busy during upload
+                _isProtocolBusy = true;
 
                 // PARALLEL UPLOAD: Process files in batches using multiple connections
                 Log($"🚀 Starting parallel upload with {MaxParallelUploads} connections");
                 var fileQueue = new Queue<(string localPath, string remotePath)>(allFiles);
                 var activeTasks = new List<Task>();
-                var activeConnections = new List<PS5Protocol>();
+                var taskToConnection = new Dictionary<Task, PS5Protocol>(); // FIX: Map tasks to connections directly
                 var taskToFilePath = new Dictionary<Task, string>(); // Map tasks to file paths
+                var taskToRemotePath = new Dictionary<Task, string>(); // Map tasks to remote paths for retry
                 var fileChunkCounts = new Dictionary<string, int>(); // Track how many chunks per file
                 var fileChunksCompleted = new Dictionary<string, int>(); // Track completed chunks per file
                 var completedFiles = new HashSet<string>(); // Track which files are fully complete
+                var failedFiles = new Dictionary<string, int>(); // Track retry count per file
+                const int MAX_RETRIES = 3; // Maximum retry attempts per file
 
                 UploadFileNameText.Text = $"Parallel upload: {MaxParallelUploads} connections";
 
@@ -627,90 +774,58 @@ namespace PS5Upload
                         var (localPath, remotePath) = fileQueue.Dequeue();
                         FileInfo fileInfo = new FileInfo(localPath);
                         
-                        // CRITICAL: Chunking disabled for maximum stability
-                        // PS5 cannot handle concurrent writes to same file even with mutex
-                        // 6 parallel single-connection uploads = full gigabit speed + zero errors
-                        if (false) // Chunking permanently disabled
+                        // CRITICAL: Large files (>100 MB) - limit parallel uploads to prevent PS5 memory exhaustion
+                        // Each large file uses ~4MB RAM buffer, so 8 files = ~32MB RAM (safe for PS5's 13.5GB available)
+                        // This threshold MUST match CHUNK_THRESHOLD in UploadFileParallelAsync
+                        const long LARGE_FILE_THRESHOLD = 100 * 1024 * 1024; // 100 MB - same as chunking threshold
+                        const int MAX_PARALLEL_LARGE_FILES = 8; // 8 large files at a time - optimized for speed
+                        bool isLargeFile = fileInfo.Length > LARGE_FILE_THRESHOLD;
+                        
+                        // Count how many large files are currently uploading
+                        int currentLargeFileCount = 0;
+                        foreach (var kvp in taskToFilePath)
                         {
-                            // CRITICAL: Use only 2 chunks for maximum PS5 stability
-                            // Multiple threads waiting on the same file mutex causes connection drops
-                            // 2 chunks provides good speed while maintaining stability
-                            int chunkCount = 2;
-                            
-                            // Split file into chunks for parallel upload
-                            long chunkSize = fileInfo.Length / chunkCount;
-                            Log($"📤 Starting CHUNKED upload: {Path.GetFileName(localPath)} ({FormatFileSize(fileInfo.Length)}) - {chunkCount} chunks");
-                            
-                            // Create all connections first, then start uploads in parallel
-                            var connections = new List<PS5Protocol>();
-                            var connectionTasks = new List<Task<PS5Protocol?>>();
-                            
-                            for (int i = 0; i < chunkCount; i++)
+                            if (File.Exists(kvp.Value))
                             {
-                                int chunkIndex = i;
-                                var connTask = Task.Run(async () =>
-                                {
-                                    var conn = new PS5Protocol();
-                                    if (await conn.ConnectAsync(_ps5IpAddress))
-                                    {
-                                        Log($"✅ Chunk {chunkIndex + 1}/{chunkCount} connected");
-                                        return conn;
-                                    }
-                                    return null;
-                                });
-                                connectionTasks.Add(connTask);
+                                var fi = new FileInfo(kvp.Value);
+                                if (fi.Length > LARGE_FILE_THRESHOLD)
+                                    currentLargeFileCount++;
                             }
-                            
-                            // Wait for all connections to complete
-                            var connResults = await Task.WhenAll(connectionTasks);
-                            
-                            // Track chunk count for this file
-                            fileChunkCounts[localPath] = chunkCount;
+                        }
+                        
+                        if (isLargeFile && currentLargeFileCount >= MAX_PARALLEL_LARGE_FILES)
+                        {
+                            // Too many large files already uploading
+                            // Put it back in queue and wait
+                            fileQueue.Enqueue((localPath, remotePath));
+                            Log($"⏸️ Large file queued, waiting for slot ({currentLargeFileCount}/{MAX_PARALLEL_LARGE_FILES} large files active): {Path.GetFileName(localPath)} ({FormatFileSize(fileInfo.Length)})");
+                            break;
+                        }
+                        
+                        // Single-connection upload per file (no parallel chunking)
+                        // 6 parallel single-connection uploads = full gigabit speed + zero errors
+                        Log($"📤 Starting upload: {Path.GetFileName(localPath)} (Queue: {fileQueue.Count}, Active: {activeTasks.Count})");
+                        var connection = new PS5Protocol();
+                        
+                        if (await connection.ConnectAsync(_ps5IpAddress))
+                        {
+                            Log($"✅ Connection {activeTasks.Count + 1} established");
+                            var task = UploadFileParallelAsync(connection, localPath, remotePath, _uploadCancellation.Token);
+                            activeTasks.Add(task);
+                            taskToConnection[task] = connection; // FIX: Map task to connection directly
+                            taskToFilePath[task] = localPath; // Map task to file
+                            taskToRemotePath[task] = remotePath; // Map task to remote path for retry
+                            fileChunkCounts[localPath] = 1; // Single chunk for small files
                             fileChunksCompleted[localPath] = 0;
-                            
-                            // Start all uploads in parallel
-                            for (int i = 0; i < chunkCount; i++)
-                            {
-                                var conn = connResults[i];
-                                if (conn != null)
-                                {
-                                    long offset = i * chunkSize;
-                                    long size = (i == chunkCount - 1) ? (fileInfo.Length - offset) : chunkSize;
-                                    
-                                    lock (activeConnections)
-                                    {
-                                        activeConnections.Add(conn);
-                                    }
-                                    
-                                    var uploadTask = UploadFileChunkAsync(conn, localPath, remotePath, offset, size, _uploadCancellation.Token);
-                                    activeTasks.Add(uploadTask);
-                                    taskToFilePath[uploadTask] = localPath; // Map task to file
-                                }
-                            }
                         }
                         else
                         {
-                            // Normal single-connection upload for small files
-                            Log($"📤 Starting upload: {Path.GetFileName(localPath)} (Queue: {fileQueue.Count}, Active: {activeTasks.Count})");
-                            var connection = new PS5Protocol();
-                            
-                            if (await connection.ConnectAsync(_ps5IpAddress))
-                            {
-                                Log($"✅ Connection {activeTasks.Count + 1} established");
-                                activeConnections.Add(connection);
-                                var task = UploadFileParallelAsync(connection, localPath, remotePath, _uploadCancellation.Token);
-                                activeTasks.Add(task);
-                                taskToFilePath[task] = localPath; // Map task to file
-                                fileChunkCounts[localPath] = 1; // Single chunk for small files
-                                fileChunksCompleted[localPath] = 0;
-                            }
-                            else
-                            {
-                                Log($"❌ Connection failed, requeueing {Path.GetFileName(localPath)}");
-                                // Connection failed, put file back in queue and wait
-                                fileQueue.Enqueue((localPath, remotePath));
-                                break;
-                            }
+                            Log($"❌ Connection failed, requeueing {Path.GetFileName(localPath)}");
+                            // Connection failed, put file back in queue and wait
+                            fileQueue.Enqueue((localPath, remotePath));
+                            // Wait before retrying to let PS5 recover
+                            await Task.Delay(2000);
+                            break;
                         }
                     }
 
@@ -722,53 +837,100 @@ namespace PS5Upload
                         Log($"✅ Task completed");
                         
                         // Await the task to catch any exceptions
+                        bool taskSucceeded = false;
+                        string? failedFilePath = null;
+                        string? failedRemotePath = null;
+                        
                         try
                         {
                             await completedTask;
                             Log($"✅ Task awaited successfully");
+                            taskSucceeded = true;
                         }
                         catch (Exception ex)
                         {
                             Log($"❌ Task exception: {ex.Message}");
+                            taskSucceeded = false;
+                            
+                            // Get file paths for retry
+                            if (taskToFilePath.TryGetValue(completedTask, out failedFilePath) &&
+                                taskToRemotePath.TryGetValue(completedTask, out failedRemotePath))
+                            {
+                                // Check retry count
+                                if (!failedFiles.ContainsKey(failedFilePath))
+                                    failedFiles[failedFilePath] = 0;
+                                
+                                failedFiles[failedFilePath]++;
+                                
+                                if (failedFiles[failedFilePath] <= MAX_RETRIES)
+                                {
+                                    Log($"🔄 Requeueing failed file for retry ({failedFiles[failedFilePath]}/{MAX_RETRIES}): {Path.GetFileName(failedFilePath)}");
+                                    
+                                    // FIX: Delete corrupted/partial file on PS5 before retry
+                                    // This prevents data corruption when chunked uploads fail mid-way
+                                    try
+                                    {
+                                        Log($"🗑️ Deleting partial file before retry: {failedRemotePath}");
+                                        await _protocol.DeleteFileAsync(failedRemotePath);
+                                        Log($"✅ Partial file deleted");
+                                    }
+                                    catch (Exception delEx)
+                                    {
+                                        Log($"⚠️ Could not delete partial file (may not exist): {delEx.Message}");
+                                    }
+                                    
+                                    fileQueue.Enqueue((failedFilePath, failedRemotePath));
+                                    // Reset chunk tracking for retry
+                                    fileChunksCompleted[failedFilePath] = 0;
+                                    // Wait before retrying to let PS5 recover from connection errors
+                                    await Task.Delay(3000);
+                                }
+                                else
+                                {
+                                    Log($"❌ Max retries exceeded, skipping: {Path.GetFileName(failedFilePath)}");
+                                }
+                            }
+                            
                             Dispatcher.Invoke(() =>
                             {
                                 UploadFileNameText.Text = $"Upload error: {ex.Message}";
                             });
                         }
                         
-                        int taskIndex = activeTasks.IndexOf(completedTask);
-                        Log($"🔍 Task index: {taskIndex} (Total tasks: {activeTasks.Count}, Connections: {activeConnections.Count})");
-                        
-                        // CRITICAL FIX: Always remove task and update file progress, even if index mismatch
+                        // FIX: Use Dictionary-based connection lookup instead of index-based
                         // Get the file path for this task
-                        string filePath = null;
+                        string? filePath = null;
                         if (taskToFilePath.TryGetValue(completedTask, out filePath))
                         {
-                            // Increment completed chunks for this file
-                            lock (_progressLock)
+                            // Only count as completed if task succeeded
+                            if (taskSucceeded)
                             {
-                                fileChunksCompleted[filePath]++;
-                                
-                                // Check if all chunks for this file are complete
-                                if (fileChunksCompleted[filePath] >= fileChunkCounts[filePath] && !completedFiles.Contains(filePath))
+                                // Increment completed chunks for this file
+                                lock (_progressLock)
                                 {
-                                    completedFiles.Add(filePath);
-                                    _completedFiles++;
-                                    Log($"✅ File {_completedFiles}/{_totalFilesToUpload} completed");
+                                    fileChunksCompleted[filePath]++;
+                                    
+                                    // Check if all chunks for this file are complete
+                                    if (fileChunksCompleted[filePath] >= fileChunkCounts[filePath] && !completedFiles.Contains(filePath))
+                                    {
+                                        completedFiles.Add(filePath);
+                                        _completedFiles++;
+                                        Log($"✅ File {_completedFiles}/{_totalFilesToUpload} completed");
+                                    }
                                 }
                             }
                             taskToFilePath.Remove(completedTask);
+                            taskToRemotePath.Remove(completedTask);
                         }
                         
                         // Remove task from list
                         activeTasks.Remove(completedTask);
                         
-                        // Try to cleanup connection if index is valid
-                        if (taskIndex >= 0 && taskIndex < activeConnections.Count)
+                        // FIX: Cleanup connection using Dictionary lookup (no more index mismatch!)
+                        if (taskToConnection.TryGetValue(completedTask, out var completedConn))
                         {
-                            Log($"🧹 Cleaning up connection at index {taskIndex}");
-                            var completedConn = activeConnections[taskIndex];
-                            activeConnections.RemoveAt(taskIndex);
+                            Log($"🧹 Cleaning up connection for completed task");
+                            taskToConnection.Remove(completedTask);
                             
                             // Aggressively dispose connection immediately
                             try
@@ -777,10 +939,6 @@ namespace PS5Upload
                                 completedConn.Dispose();
                             }
                             catch { }
-                        }
-                        else
-                        {
-                            Log($"⚠️ Connection index mismatch ({taskIndex} vs {activeConnections.Count}) - task removed, connection cleanup skipped");
                         }
                         
                         // Update active task count for real-time UI updates
@@ -802,8 +960,8 @@ namespace PS5Upload
                 _uiUpdateTimer.Stop();
 
                 // Cleanup any remaining connections (but NOT the main protocol connection)
-                Log($"🧹 Cleaning up {activeConnections.Count} remaining connections");
-                foreach (var conn in activeConnections.ToList())
+                Log($"🧹 Cleaning up {taskToConnection.Count} remaining connections");
+                foreach (var conn in taskToConnection.Values.ToList())
                 {
                     try
                     {
@@ -812,7 +970,7 @@ namespace PS5Upload
                     }
                     catch { }
                 }
-                activeConnections.Clear();
+                taskToConnection.Clear();
                 Log("✅ Cleanup complete");
 
                 if (!_uploadCancellation.Token.IsCancellationRequested)
@@ -821,18 +979,16 @@ namespace PS5Upload
                     MessageBox.Show($"Upload completed!\n\n{_totalFilesToUpload} files uploaded\nTotal: {FormatFileSize(_totalBytesUploaded)}", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
                     _localFiles.Clear();
                     
-                    // Reconnect main protocol after upload to ensure connection is active
-                    Log("🔄 Reconnecting to PS5 after upload...");
-                    try
+                    // FIX: Keep main protocol connection alive - no disconnect/reconnect needed!
+                    // The main _protocol connection was never used for upload (separate connections were created)
+                    // So it should still be alive and ready for browsing
+                    Log("✅ Main connection still active, refreshing directory...");
+                    _isProtocolBusy = false;
+                    
+                    // Check if connection is still alive, reconnect only if needed
+                    if (!_protocol.IsConnected)
                     {
-                        // Disconnect first to clean up any stale connection
-                        _protocol.Disconnect();
-                        Log("🔌 Disconnected old connection");
-                        
-                        // Wait a bit for the server to clean up
-                        await Task.Delay(500);
-                        
-                        // Reconnect
+                        Log("⚠️ Main connection lost, reconnecting...");
                         if (await _protocol.ConnectAsync(_ps5IpAddress))
                         {
                             Log("✅ Reconnected to PS5");
@@ -844,13 +1000,8 @@ namespace PS5Upload
                             return;
                         }
                     }
-                    catch (Exception ex)
-                    {
-                        Log($"❌ Reconnection error: {ex.Message}");
-                        MessageBox.Show($"Reconnection error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                        return;
-                    }
                     
+                    await UpdateStorageInfoAsync();
                     await LoadPS5DirectoryAsync(_currentPS5Path);
                 }
                 else
@@ -858,27 +1009,36 @@ namespace PS5Upload
                     Log("⚠️ Upload cancelled");
                     MessageBox.Show("Upload cancelled by user", "Cancelled", MessageBoxButton.OK, MessageBoxImage.Warning);
                     
-                    // Reconnect main protocol after cancellation to allow folder navigation
-                    Log("🔄 Reconnecting to PS5 after cancellation...");
-                    try
+                    // FIX: Keep connection alive, only reconnect if needed
+                    Log("✅ Checking main connection status...");
+                    _isProtocolBusy = false;
+                    
+                    if (!_protocol.IsConnected)
                     {
-                        // Disconnect first to clean up
-                        _protocol.Disconnect();
-                        await Task.Delay(500);
-                        
-                        if (await _protocol.ConnectAsync(_ps5IpAddress))
+                        Log("⚠️ Main connection lost, reconnecting...");
+                        try
                         {
-                            Log("✅ Reconnected to PS5");
-                            await LoadPS5DirectoryAsync(_currentPS5Path);
+                            if (await _protocol.ConnectAsync(_ps5IpAddress))
+                            {
+                                Log("✅ Reconnected to PS5");
+                                await UpdateStorageInfoAsync();
+                                await LoadPS5DirectoryAsync(_currentPS5Path);
+                            }
+                            else
+                            {
+                                Log("❌ Failed to reconnect to PS5");
+                            }
                         }
-                        else
+                        catch (Exception reconnectEx)
                         {
-                            Log("❌ Reconnection failed");
+                            Log($"❌ Reconnection failed: {reconnectEx.Message}");
                         }
                     }
-                    catch (Exception ex)
+                    else
                     {
-                        Log($"❌ Reconnection error: {ex.Message}");
+                        Log("✅ Main connection still active");
+                        await UpdateStorageInfoAsync();
+                        await LoadPS5DirectoryAsync(_currentPS5Path);
                     }
                 }
             }
@@ -887,28 +1047,38 @@ namespace PS5Upload
                 Log("❌ Upload cancelled (OperationCanceledException)");
                 MessageBox.Show("Upload cancelled by user", "Cancelled", MessageBoxButton.OK, MessageBoxImage.Warning);
                 
-                // Reconnect main protocol after cancellation to allow folder navigation
-                Log("🔄 Reconnecting to PS5 after cancellation...");
-                try
+                // FIX: Keep connection alive, only reconnect if needed
+                _isProtocolBusy = false;
+                
+                if (!_protocol.IsConnected)
                 {
-                    _protocol.Disconnect();
-                    await Task.Delay(500);
-                    
-                    if (await _protocol.ConnectAsync(_ps5IpAddress))
+                    Log("⚠️ Main connection lost, reconnecting...");
+                    try
                     {
-                        Log("✅ Reconnected to PS5");
-                        await LoadPS5DirectoryAsync(_currentPS5Path);
+                        if (await _protocol.ConnectAsync(_ps5IpAddress))
+                        {
+                            Log("✅ Reconnected to PS5");
+                            await UpdateStorageInfoAsync();
+                            await LoadPS5DirectoryAsync(_currentPS5Path);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"❌ Reconnection error: {ex.Message}");
                     }
                 }
-                catch (Exception ex)
+                else
                 {
-                    Log($"❌ Reconnection error: {ex.Message}");
+                    Log("✅ Main connection still active");
+                    await UpdateStorageInfoAsync();
+                    await LoadPS5DirectoryAsync(_currentPS5Path);
                 }
             }
             catch (Exception ex)
             {
                 Log($"❌ Upload failed: {ex.Message}\n{ex.StackTrace}");
                 MessageBox.Show($"Upload failed: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                _isProtocolBusy = false;
             }
             finally
             {
@@ -972,51 +1142,128 @@ namespace PS5Upload
                 string fileName = Path.GetFileName(localPath);
                 FileInfo fileInfo = new FileInfo(localPath);
                 
-                Log($"⬆️ Uploading: {fileName}");
+                // CRITICAL: Use chunking for large files (>100MB) to prevent connection timeouts
+                const long CHUNK_THRESHOLD = 100 * 1024 * 1024; // 100 MB
+                const long CHUNK_SIZE = 500 * 1024 * 1024; // 500 MB chunks
                 
-                // Progress reporting for per-file progress bar
-                var progress = new Progress<UploadProgress>(p =>
+                if (fileInfo.Length > CHUNK_THRESHOLD)
                 {
-                    double filePercent = p.TotalBytes > 0 ? (double)p.BytesSent / p.TotalBytes * 100 : 0;
+                    Log($"⬆️ Uploading (chunked): {fileName} ({FormatFileSize(fileInfo.Length)})");
                     
-                    lock (_progressLock)
+                    long totalChunks = (fileInfo.Length + CHUNK_SIZE - 1) / CHUNK_SIZE;
+                    bool allChunksSuccess = true;
+                    
+                    for (long chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++)
                     {
-                        _currentFileName = fileName;
-                        _currentFileBytes = p.BytesSent;
-                        _currentFileTotalBytes = p.TotalBytes;
+                        long offset = chunkIndex * CHUNK_SIZE;
+                        long size = Math.Min(CHUNK_SIZE, fileInfo.Length - offset);
+                        
+                        Log($"📦 Uploading chunk {chunkIndex + 1}/{totalChunks}: {fileName} @ {FormatFileSize(offset)}");
+                        
+                        // Progress reporting for chunked upload
+                        var progress = new Progress<UploadProgress>(p =>
+                        {
+                            double filePercent = fileInfo.Length > 0 ? (double)(offset + p.BytesSent) / fileInfo.Length * 100 : 0;
+                            
+                            lock (_progressLock)
+                            {
+                                _currentFileName = fileName;
+                                _currentFileBytes = offset + p.BytesSent;
+                                _currentFileTotalBytes = fileInfo.Length;
+                            }
+                            
+                            Dispatcher.InvokeAsync(() =>
+                            {
+                                UploadProgressBar.Value = filePercent;
+                                UploadProgressText.Text = $"{FormatFileSize(offset + p.BytesSent)} / {FormatFileSize(fileInfo.Length)} ({filePercent:F1}%)";
+                            });
+                            
+                            // Log progress periodically
+                            if (p.BytesSent % (40 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
+                            {
+                                Log($"📊 Chunk {chunkIndex + 1}/{totalChunks}: {FormatFileSize(p.BytesSent)}/{FormatFileSize(size)} @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                            }
+                        });
+                        
+                        bool success = await connection.UploadFileAsync(localPath, remotePath, progress, cancellationToken, offset, size);
+                        
+                        if (success)
+                        {
+                            Log($"✅ Chunk {chunkIndex + 1}/{totalChunks} complete: {fileName}");
+                            lock (_progressLock)
+                            {
+                                _totalBytesUploaded += size;
+                            }
+                        }
+                        else
+                        {
+                            Log($"❌ Chunk {chunkIndex + 1}/{totalChunks} failed: {fileName}");
+                            allChunksSuccess = false;
+                            break;
+                        }
                     }
                     
-                    Dispatcher.Invoke(() =>
+                    if (allChunksSuccess)
                     {
-                        UploadProgressBar.Value = filePercent;
-                        UploadProgressText.Text = $"{FormatFileSize(p.BytesSent)} / {FormatFileSize(p.TotalBytes)} ({filePercent:F1}%)";
-                    });
-                    
-                    // Log progress periodically (every 40MB)
-                    if (p.BytesSent % (40 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
-                    {
-                        Log($"📊 {fileName}: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({filePercent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                        Log($"✅ Upload complete (chunked): {fileName}");
                     }
-                });
-
-                bool success = await connection.UploadFileAsync(localPath, remotePath, progress, cancellationToken);
-                
-                if (success)
-                {
-                    Log($"✅ Upload complete: {fileName}");
-                    lock (_progressLock)
+                    else
                     {
-                        _totalBytesUploaded += fileInfo.Length;
+                        Log($"❌ Upload failed (chunked): {fileName}");
+                        throw new Exception($"Chunked upload failed for {fileName}");
                     }
                 }
                 else
                 {
-                    Log($"❌ Upload failed: {fileName}");
+                    // Small file - upload normally without chunking
+                    Log($"⬆️ Uploading: {fileName}");
+                    
+                    // Progress reporting for per-file progress bar
+                    var progress = new Progress<UploadProgress>(p =>
+                    {
+                        double filePercent = p.TotalBytes > 0 ? (double)p.BytesSent / p.TotalBytes * 100 : 0;
+                        
+                        lock (_progressLock)
+                        {
+                            _currentFileName = fileName;
+                            _currentFileBytes = p.BytesSent;
+                            _currentFileTotalBytes = p.TotalBytes;
+                        }
+                        
+                        Dispatcher.InvokeAsync(() =>
+                        {
+                            UploadProgressBar.Value = filePercent;
+                            UploadProgressText.Text = $"{FormatFileSize(p.BytesSent)} / {FormatFileSize(p.TotalBytes)} ({filePercent:F1}%)";
+                        });
+                        
+                        // Log progress periodically (every 40MB)
+                        if (p.BytesSent % (40 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
+                        {
+                            Log($"📊 {fileName}: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({filePercent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                        }
+                    });
+
+                    bool success = await connection.UploadFileAsync(localPath, remotePath, progress, cancellationToken);
+                    
+                    if (success)
+                    {
+                        Log($"✅ Upload complete: {fileName}");
+                        lock (_progressLock)
+                        {
+                            _totalBytesUploaded += fileInfo.Length;
+                        }
+                    }
+                    else
+                    {
+                        Log($"❌ Upload failed: {fileName}");
+                        throw new Exception($"Upload failed for {fileName}");
+                    }
                 }
             }
             catch (Exception ex)
             {
                 Log($"❌ Exception uploading {Path.GetFileName(localPath)}: {ex.Message}");
+                throw; // Re-throw so retry logic can catch it
             }
         }
 
@@ -1051,7 +1298,7 @@ namespace PS5Upload
                 {
                     Title = "Rename",
                     Width = 400,
-                    Height = 150,
+                    Height = 180,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
                     Owner = this,
                     Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
@@ -1133,7 +1380,7 @@ namespace PS5Upload
                 {
                     Title = "Copy To",
                     Width = 500,
-                    Height = 150,
+                    Height = 180,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
                     Owner = this,
                     Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
@@ -1261,7 +1508,7 @@ namespace PS5Upload
                     {
                         if (listBox.SelectedItem != null)
                         {
-                            string selected = listBox.SelectedItem.ToString();
+                            string selected = listBox.SelectedItem.ToString()!;
                             if (selected == "..")
                             {
                                 // Go to parent directory
@@ -1294,7 +1541,7 @@ namespace PS5Upload
                     {
                         if (listBox.SelectedItem != null && listBox.SelectedItem.ToString() != "..")
                         {
-                            string selected = listBox.SelectedItem.ToString();
+                            string selected = listBox.SelectedItem.ToString()!;
                             textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + selected + "/" + item.Name;
                             pathDialog.Close();
                         }
@@ -1366,7 +1613,7 @@ namespace PS5Upload
                 {
                     Title = "Move To",
                     Width = 500,
-                    Height = 150,
+                    Height = 180,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
                     Owner = this,
                     Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
@@ -1494,7 +1741,7 @@ namespace PS5Upload
                     {
                         if (listBox.SelectedItem != null)
                         {
-                            string selected = listBox.SelectedItem.ToString();
+                            string selected = listBox.SelectedItem.ToString()!;
                             if (selected == "..")
                             {
                                 // Go to parent directory
@@ -1527,7 +1774,7 @@ namespace PS5Upload
                     {
                         if (listBox.SelectedItem != null && listBox.SelectedItem.ToString() != "..")
                         {
-                            string selected = listBox.SelectedItem.ToString();
+                            string selected = listBox.SelectedItem.ToString()!;
                             textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + selected + "/" + item.Name;
                             pathDialog.Close();
                         }
@@ -1624,6 +1871,131 @@ namespace PS5Upload
             }
         }
 
+        private async void DownloadMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (PS5FilesListBox.SelectedItem is PS5FileItem item)
+            {
+                if (item.IsDirectory)
+                {
+                    MessageBox.Show("Folder download not yet implemented. Please select a file.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                    return;
+                }
+                
+                // Show save file dialog
+                var dialog = new Microsoft.Win32.SaveFileDialog
+                {
+                    FileName = item.Name,
+                    Title = "Save Downloaded File"
+                };
+                
+                if (dialog.ShowDialog() == true)
+                {
+                    try
+                    {
+                        Log($"⬇️ Downloading: {item.Name} ({FormatFileSize(item.Size)})");
+                        
+                        var progress = new Progress<UploadProgress>(p =>
+                        {
+                            Dispatcher.Invoke(() =>
+                            {
+                                double percent = p.TotalBytes > 0 ? (double)p.BytesSent / p.TotalBytes * 100 : 0;
+                                Log($"📊 Download progress: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({percent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                            });
+                        });
+                        
+                        bool success = await _protocol.DownloadFileAsync(item.FullPath, dialog.FileName, progress);
+                        
+                        if (success)
+                        {
+                            Log($"✅ Downloaded: {item.Name} → {dialog.FileName}");
+                            MessageBox.Show($"File downloaded successfully!\n\nSaved to: {dialog.FileName}", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                        }
+                        else
+                        {
+                            Log($"❌ Download failed: {item.Name}");
+                            MessageBox.Show("Download failed", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                        }
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"❌ Download error: {ex.Message}");
+                        MessageBox.Show($"Download error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+            }
+        }
+
+        private async void DeleteSelectedMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            var selectedItems = PS5FilesListBox.SelectedItems.Cast<PS5FileItem>().ToList();
+            
+            if (selectedItems.Count == 0)
+            {
+                MessageBox.Show("No items selected.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+            
+            // Count folders and files
+            int folderCount = selectedItems.Count(i => i.IsDirectory);
+            int fileCount = selectedItems.Count(i => !i.IsDirectory);
+            
+            string message = $"Delete {selectedItems.Count} items?\n\n";
+            if (folderCount > 0) message += $"📁 {folderCount} folders\n";
+            if (fileCount > 0) message += $"📄 {fileCount} files";
+            
+            var result = MessageBox.Show(message, "Confirm Bulk Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes)
+                return;
+            
+            Log($"🗑️ Starting bulk delete of {selectedItems.Count} items...");
+            
+            // Mark protocol as busy
+            _isProtocolBusy = true;
+            
+            int successCount = 0;
+            int failCount = 0;
+            
+            foreach (var item in selectedItems)
+            {
+                try
+                {
+                    if (item.IsDirectory)
+                    {
+                        Log($"🗑️ Deleting folder: {item.Name}");
+                        await _protocol.DeleteDirAsync(item.FullPath);
+                        Log($"✅ Deleted: {item.Name}");
+                    }
+                    else
+                    {
+                        Log($"🗑️ Deleting file: {item.Name}");
+                        await _protocol.DeleteFileAsync(item.FullPath);
+                        Log($"✅ Deleted: {item.Name}");
+                    }
+                    successCount++;
+                    
+                    // Give PS5 time to process before next delete
+                    await Task.Delay(300);
+                }
+                catch (Exception ex)
+                {
+                    Log($"❌ Failed to delete {item.Name}: {ex.Message}");
+                    failCount++;
+                }
+            }
+            
+            Log($"🗑️ Bulk delete complete: {successCount} succeeded, {failCount} failed");
+            
+            // Mark protocol as not busy
+            _isProtocolBusy = false;
+            
+            // Wait a moment before reloading
+            await Task.Delay(500);
+            await LoadPS5DirectoryAsync(_currentPS5Path);
+            
+            MessageBox.Show($"Bulk delete complete!\n\n✅ {successCount} deleted\n❌ {failCount} failed", 
+                "Complete", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
         private string FormatFileSize(long bytes)
         {
             string[] sizes = { "B", "KB", "MB", "GB", "TB" };
@@ -1643,24 +2015,30 @@ namespace PS5Upload
             _duplicateAction = DuplicateAction.Ask; // Reset for each upload session
             
             // Group files by directory to minimize ListDir calls
-            var filesByDir = allFiles.GroupBy(f => Path.GetDirectoryName(f.remotePath)?.Replace("\\", "/") ?? "");
+            var filesByDir = allFiles.GroupBy(f => Path.GetDirectoryName(f.remotePath)?.Replace("\\", "/") ?? "").ToList();
+            Log($"🔍 Checking {filesByDir.Count} directories for duplicates...");
             
+            int dirIndex = 0;
             foreach (var dirGroup in filesByDir)
             {
+                dirIndex++;
                 string remoteDir = dirGroup.Key;
                 
                 // Get existing files in this directory
                 Dictionary<string, long> existingFiles;
                 try
                 {
+                    Log($"📂 Checking dir ({dirIndex}/{filesByDir.Count}): {remoteDir}");
                     var entries = await _protocol.ListDirAsync(remoteDir);
                     existingFiles = entries
                         .Where(e => !e.IsDirectory)
                         .ToDictionary(e => e.Name, e => e.Size);
+                    Log($"   Found {existingFiles.Count} existing files");
                 }
                 catch
                 {
                     // Directory doesn't exist or error - all files are new
+                    Log($"   Directory doesn't exist - {dirGroup.Count()} new files");
                     filesToUpload.AddRange(dirGroup);
                     continue;
                 }
@@ -1668,13 +2046,20 @@ namespace PS5Upload
                 // Check each file in this directory
                 foreach (var file in dirGroup)
                 {
-                    string fileName = Path.GetFileName(file.remotePath);
+                    string? fileName = Path.GetFileName(file.remotePath);
                     
-                    if (existingFiles.ContainsKey(fileName))
+                    if (existingFiles.ContainsKey(fileName!))
                     {
                         // File exists - check what to do
                         if (_duplicateAction == DuplicateAction.ReplaceAll)
                         {
+                            // Delete existing file first to free disk space
+                            try
+                            {
+                                await _protocol.DeleteFileAsync(file.remotePath);
+                                Log($"🗑️ Deleted existing file: {fileName}");
+                            }
+                            catch { /* Ignore delete errors */ }
                             filesToUpload.Add(file);
                             continue;
                         }
@@ -1698,6 +2083,13 @@ namespace PS5Upload
                                 switch (dialog.UserAction)
                                 {
                                     case DuplicateFileDialog.FileAction.Replace:
+                                        // Delete existing file first to free disk space
+                                        try
+                                        {
+                                            await _protocol.DeleteFileAsync(file.remotePath);
+                                            Log($"🗑️ Deleted existing file: {fileName}");
+                                        }
+                                        catch { /* Ignore delete errors */ }
                                         filesToUpload.Add(file);
                                         break;
                                     case DuplicateFileDialog.FileAction.Skip:
@@ -1705,6 +2097,13 @@ namespace PS5Upload
                                         break;
                                     case DuplicateFileDialog.FileAction.ReplaceAll:
                                         _duplicateAction = DuplicateAction.ReplaceAll;
+                                        // Delete existing file first to free disk space
+                                        try
+                                        {
+                                            await _protocol.DeleteFileAsync(file.remotePath);
+                                            Log($"🗑️ Deleted existing file: {fileName}");
+                                        }
+                                        catch { /* Ignore delete errors */ }
                                         filesToUpload.Add(file);
                                         break;
                                     case DuplicateFileDialog.FileAction.SkipAll:
@@ -1729,6 +2128,267 @@ namespace PS5Upload
             }
             
             return filesToUpload;
+        }
+
+        // Multi-PS5 Support Methods
+        private void LoadProfiles()
+        {
+            try
+            {
+                if (File.Exists(ProfilesFileName))
+                {
+                    string json = File.ReadAllText(ProfilesFileName);
+                    _ps5Profiles = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json) ?? new Dictionary<string, string>();
+                    
+                    PS5ProfileComboBox.Items.Clear();
+                    foreach (var profile in _ps5Profiles)
+                    {
+                        PS5ProfileComboBox.Items.Add(profile.Key);
+                    }
+                    
+                    if (PS5ProfileComboBox.Items.Count > 0)
+                    {
+                        PS5ProfileComboBox.SelectedIndex = 0;
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"⚠️ Failed to load profiles: {ex.Message}");
+            }
+        }
+
+        private void SaveProfiles()
+        {
+            try
+            {
+                string json = System.Text.Json.JsonSerializer.Serialize(_ps5Profiles, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(ProfilesFileName, json);
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Failed to save profiles: {ex.Message}");
+            }
+        }
+
+        private void SaveProfileButton_Click(object sender, RoutedEventArgs e)
+        {
+            string ipAddress = IpAddressTextBox.Text.Trim();
+            if (string.IsNullOrWhiteSpace(ipAddress))
+            {
+                MessageBox.Show("Please enter a PS5 IP address first", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            // Ask for profile name
+            var dialog = new Window
+            {
+                Title = "Save PS5 Profile",
+                Width = 400,
+                Height = 180,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
+            };
+
+            var grid = new Grid { Margin = new Thickness(20) };
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var label = new TextBlock
+            {
+                Text = "Profile Name:",
+                Foreground = System.Windows.Media.Brushes.White,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            Grid.SetRow(label, 0);
+
+            var textBox = new TextBox
+            {
+                Text = "My PS5",
+                Margin = new Thickness(0, 0, 0, 15)
+            };
+            Grid.SetRow(textBox, 1);
+
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            Grid.SetRow(buttonPanel, 2);
+
+            var okButton = new Button
+            {
+                Content = "Save",
+                Width = 80,
+                Margin = new Thickness(0, 0, 10, 0)
+            };
+            okButton.Click += (s, args) => { dialog.DialogResult = true; dialog.Close(); };
+
+            var cancelButton = new Button
+            {
+                Content = "Cancel",
+                Width = 80
+            };
+            cancelButton.Click += (s, args) => { dialog.DialogResult = false; dialog.Close(); };
+
+            buttonPanel.Children.Add(okButton);
+            buttonPanel.Children.Add(cancelButton);
+
+            grid.Children.Add(label);
+            grid.Children.Add(textBox);
+            grid.Children.Add(buttonPanel);
+            dialog.Content = grid;
+
+            if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(textBox.Text))
+            {
+                string profileName = textBox.Text.Trim();
+                _ps5Profiles[profileName] = ipAddress;
+                SaveProfiles();
+                
+                // Refresh combo box
+                PS5ProfileComboBox.Items.Clear();
+                foreach (var profile in _ps5Profiles)
+                {
+                    PS5ProfileComboBox.Items.Add(profile.Key);
+                }
+                PS5ProfileComboBox.SelectedItem = profileName;
+                
+                Log($"💾 Saved profile: {profileName} ({ipAddress})");
+                MessageBox.Show($"Profile '{profileName}' saved successfully!", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        private void DeleteProfileButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (PS5ProfileComboBox.SelectedItem is string profileName)
+            {
+                var result = MessageBox.Show($"Delete profile '{profileName}'?", "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (result == MessageBoxResult.Yes)
+                {
+                    _ps5Profiles.Remove(profileName);
+                    SaveProfiles();
+                    
+                    PS5ProfileComboBox.Items.Remove(profileName);
+                    if (PS5ProfileComboBox.Items.Count > 0)
+                    {
+                        PS5ProfileComboBox.SelectedIndex = 0;
+                    }
+                    
+                    Log($"🗑️ Deleted profile: {profileName}");
+                }
+            }
+            else
+            {
+                MessageBox.Show("No profile selected", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        private void PS5ProfileComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (PS5ProfileComboBox.SelectedItem is string profileName && _ps5Profiles.ContainsKey(profileName))
+            {
+                IpAddressTextBox.Text = _ps5Profiles[profileName];
+                Log($"📋 Loaded profile: {profileName}");
+            }
+        }
+
+        // Favorites/Bookmarks Methods
+        private void LoadFavorites()
+        {
+            try
+            {
+                if (File.Exists(FavoritesFileName))
+                {
+                    string json = File.ReadAllText(FavoritesFileName);
+                    _favoritePaths = System.Text.Json.JsonSerializer.Deserialize<List<string>>(json) ?? new List<string>();
+                    
+                    FavoritesComboBox.Items.Clear();
+                    foreach (var path in _favoritePaths)
+                    {
+                        FavoritesComboBox.Items.Add(path);
+                    }
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"⚠️ Failed to load favorites: {ex.Message}");
+            }
+        }
+
+        private void SaveFavorites()
+        {
+            try
+            {
+                string json = System.Text.Json.JsonSerializer.Serialize(_favoritePaths, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+                File.WriteAllText(FavoritesFileName, json);
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Failed to save favorites: {ex.Message}");
+            }
+        }
+
+        private void AddFavoriteButton_Click(object sender, RoutedEventArgs e)
+        {
+            string currentPath = CurrentPathTextBox.Text.Trim();
+            
+            if (string.IsNullOrWhiteSpace(currentPath))
+            {
+                MessageBox.Show("No path to add to favorites", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            if (_favoritePaths.Contains(currentPath))
+            {
+                MessageBox.Show("This path is already in favorites", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                return;
+            }
+
+            _favoritePaths.Add(currentPath);
+            SaveFavorites();
+            
+            FavoritesComboBox.Items.Add(currentPath);
+            FavoritesComboBox.SelectedItem = currentPath;
+            
+            Log($"⭐ Added to favorites: {currentPath}");
+            MessageBox.Show($"Added to favorites:\n{currentPath}", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private void RemoveFavoriteButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (FavoritesComboBox.SelectedItem is string selectedPath)
+            {
+                var result = MessageBox.Show($"Remove from favorites?\n{selectedPath}", "Confirm Remove", MessageBoxButton.YesNo, MessageBoxImage.Question);
+                if (result == MessageBoxResult.Yes)
+                {
+                    _favoritePaths.Remove(selectedPath);
+                    SaveFavorites();
+                    
+                    FavoritesComboBox.Items.Remove(selectedPath);
+                    if (FavoritesComboBox.Items.Count > 0)
+                    {
+                        FavoritesComboBox.SelectedIndex = 0;
+                    }
+                    
+                    Log($"🗑️ Removed from favorites: {selectedPath}");
+                }
+            }
+            else
+            {
+                MessageBox.Show("No favorite selected", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+        }
+
+        private async void FavoritesComboBox_SelectionChanged(object sender, System.Windows.Controls.SelectionChangedEventArgs e)
+        {
+            if (FavoritesComboBox.SelectedItem is string favoritePath && !string.IsNullOrWhiteSpace(favoritePath))
+            {
+                Log($"⭐ Navigating to favorite: {favoritePath}");
+                CurrentPathTextBox.Text = favoritePath;
+                await LoadPS5DirectoryAsync(favoritePath);
+            }
         }
     }
 

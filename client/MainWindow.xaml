@@ -7,6 +7,12 @@
         Icon="ps5_logo.png">
     
     <Window.Resources>
+        <!-- Override system colors for ComboBox dropdown -->
+        <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#2D2D30"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.WindowColorKey}" Color="#2D2D30"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#2D2D30"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.ControlColorKey}" Color="#2D2D30"/>
+        
         <Style TargetType="Button">
             <Setter Property="Background" Value="#007ACC"/>
             <Setter Property="Foreground" Value="White"/>
@@ -94,43 +100,128 @@
                 Padding="15"
                 Margin="0,0,0,15">
             <Grid>
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
-                </Grid.ColumnDefinitions>
-
-                <TextBlock Grid.Column="0" 
-                           Text="PS5 IP Address:" 
-                           VerticalAlignment="Center"
-                           Margin="0,0,10,0"/>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
                 
-                <TextBox Grid.Column="1" 
-                         x:Name="IpAddressTextBox"
-                         Text="192.168.0.160"
-                         VerticalAlignment="Center"
-                         Margin="0,0,10,0"/>
-                
-                <Button Grid.Column="2" 
-                        x:Name="ConnectButton"
-                        Content="Connect"
-                        Click="ConnectButton_Click"
-                        Width="100"
-                        Margin="0,0,10,0"/>
-
-                <StackPanel Grid.Column="3" 
-                            Orientation="Horizontal" 
-                            VerticalAlignment="Center">
-                    <Ellipse x:Name="StatusIndicator" 
-                             Width="12" 
-                             Height="12" 
-                             Fill="#DC3545"
-                             Margin="0,0,8,0"/>
-                    <TextBlock x:Name="StatusText" 
-                               Text="Disconnected"
-                               Foreground="#999999"/>
+                <!-- PS5 Profile Selection -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                    <TextBlock Text="PS5 Profile:" 
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+                    <ComboBox x:Name="PS5ProfileComboBox"
+                              Width="200"
+                              VerticalAlignment="Center"
+                              SelectionChanged="PS5ProfileComboBox_SelectionChanged"
+                              Background="#2D2D30"
+                              Foreground="White"
+                              BorderBrush="#3E3E42">
+                        <ComboBox.Template>
+                            <ControlTemplate TargetType="ComboBox">
+                                <Grid>
+                                    <ToggleButton Name="ToggleButton"
+                                                  Grid.Column="2"
+                                                  Focusable="false"
+                                                  IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                                  ClickMode="Press"
+                                                  Background="#2D2D30"
+                                                  BorderBrush="#3E3E42"
+                                                  BorderThickness="1"/>
+                                    <ContentPresenter Name="ContentSite"
+                                                      IsHitTestVisible="False"
+                                                      Content="{TemplateBinding SelectionBoxItem}"
+                                                      ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                      ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                      Margin="5,3,23,3"
+                                                      VerticalAlignment="Center"
+                                                      HorizontalAlignment="Left"/>
+                                    <Popup Name="Popup"
+                                           Placement="Bottom"
+                                           IsOpen="{TemplateBinding IsDropDownOpen}"
+                                           AllowsTransparency="True"
+                                           Focusable="False"
+                                           PopupAnimation="Slide">
+                                        <Grid Name="DropDown"
+                                              SnapsToDevicePixels="True"
+                                              MinWidth="{TemplateBinding ActualWidth}"
+                                              MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                            <Border Name="DropDownBorder"
+                                                    Background="#2D2D30"
+                                                    BorderThickness="1"
+                                                    BorderBrush="#3E3E42"/>
+                                            <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                                <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                            </ScrollViewer>
+                                        </Grid>
+                                    </Popup>
+                                </Grid>
+                            </ControlTemplate>
+                        </ComboBox.Template>
+                        <ComboBox.ItemContainerStyle>
+                            <Style TargetType="ComboBoxItem">
+                                <Setter Property="Background" Value="#2D2D30"/>
+                                <Setter Property="Foreground" Value="White"/>
+                                <Setter Property="Padding" Value="5"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ComboBoxItem">
+                                            <Border Name="Border" 
+                                                    Background="#2D2D30"
+                                                    Padding="5">
+                                                <ContentPresenter/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsHighlighted" Value="True">
+                                                    <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ComboBox.ItemContainerStyle>
+                    </ComboBox>
+                    <Button Content="💾 Save Profile" 
+                            Click="SaveProfileButton_Click"
+                            Width="140"
+                            Margin="10,0,0,0"
+                            Background="#28A745"/>
+                    <Button Content="🗑️ Delete Profile" 
+                            Click="DeleteProfileButton_Click"
+                            Width="150"
+                            Margin="5,0,0,0"
+                            Background="#DC3545"/>
                 </StackPanel>
+                
+                <!-- IP Address and Connect -->
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" 
+                               Text="PS5 IP Address:" 
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+                    
+                    <TextBox Grid.Column="1" 
+                             x:Name="IpAddressTextBox"
+                             Text="192.168.0.160"
+                             VerticalAlignment="Center"
+                             Margin="0,0,10,0"/>
+                    
+                    <Button Grid.Column="2" 
+                            x:Name="ConnectButton"
+                            Content="Connect"
+                            Click="ConnectButton_Click"
+                            Width="100"/>
+                </Grid>
             </Grid>
         </Border>
 
@@ -234,33 +325,145 @@
                     </Border>
 
                     <StackPanel Grid.Row="1" 
-                                Orientation="Horizontal" 
                                 Margin="10"
                                 Background="#2D2D30">
-                        <TextBlock Text="Current Path:" 
-                                   VerticalAlignment="Center"
-                                   Margin="0,0,10,0"/>
-                        <TextBox x:Name="CurrentPathTextBox"
-                                 Text="/data"
-                                 Width="200"
-                                 VerticalAlignment="Center"
-                                 Margin="0,0,10,0"/>
-                        <Button Content="Go" 
-                                Click="GoButton_Click"
-                                Width="60"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Current Path:" 
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0"/>
+                            <TextBox x:Name="CurrentPathTextBox"
+                                     Text="/data"
+                                     Width="200"
+                                     VerticalAlignment="Center"
+                                     Margin="0,0,10,0"/>
+                            <Button Content="Go" 
+                                    Click="GoButton_Click"
+                                    Width="60"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="⭐ Favorites:" 
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0"/>
+                            <ComboBox x:Name="FavoritesComboBox"
+                                      Width="200"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="FavoritesComboBox_SelectionChanged"
+                                      Background="#2D2D30"
+                                      Foreground="White"
+                                      BorderBrush="#3E3E42">
+                                <ComboBox.Template>
+                                    <ControlTemplate TargetType="ComboBox">
+                                        <Grid>
+                                            <ToggleButton Name="ToggleButton"
+                                                          Grid.Column="2"
+                                                          Focusable="false"
+                                                          IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                                          ClickMode="Press"
+                                                          Background="#2D2D30"
+                                                          BorderBrush="#3E3E42"
+                                                          BorderThickness="1"/>
+                                            <ContentPresenter Name="ContentSite"
+                                                              IsHitTestVisible="False"
+                                                              Content="{TemplateBinding SelectionBoxItem}"
+                                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                              Margin="5,3,23,3"
+                                                              VerticalAlignment="Center"
+                                                              HorizontalAlignment="Left"/>
+                                            <Popup Name="Popup"
+                                                   Placement="Bottom"
+                                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                                   AllowsTransparency="True"
+                                                   Focusable="False"
+                                                   PopupAnimation="Slide">
+                                                <Grid Name="DropDown"
+                                                      SnapsToDevicePixels="True"
+                                                      MinWidth="{TemplateBinding ActualWidth}"
+                                                      MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                                    <Border Name="DropDownBorder"
+                                                            Background="#2D2D30"
+                                                            BorderThickness="1"
+                                                            BorderBrush="#3E3E42"/>
+                                                    <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                                    </ScrollViewer>
+                                                </Grid>
+                                            </Popup>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </ComboBox.Template>
+                                <ComboBox.ItemContainerStyle>
+                                    <Style TargetType="ComboBoxItem">
+                                        <Setter Property="Background" Value="#2D2D30"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                        <Setter Property="Padding" Value="5"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ComboBoxItem">
+                                                    <Border Name="Border" 
+                                                            Background="#2D2D30"
+                                                            Padding="5">
+                                                        <ContentPresenter/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsHighlighted" Value="True">
+                                                            <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ComboBox.ItemContainerStyle>
+                            </ComboBox>
+                            <Button Content="⭐ Add" 
+                                    Click="AddFavoriteButton_Click"
+                                    Width="90"
+                                    Margin="10,0,0,0"
+                                    Background="#28A745"/>
+                            <Button Content="🗑️ Remove" 
+                                    Click="RemoveFavoriteButton_Click"
+                                    Width="110"
+                                    Margin="5,0,0,0"
+                                    Background="#DC3545"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔍 Search:" 
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0"/>
+                            <TextBox x:Name="SearchTextBox"
+                                     Width="250"
+                                     VerticalAlignment="Center"
+                                     TextChanged="SearchTextBox_TextChanged"
+                                     Background="#1E1E1E"
+                                     Foreground="White"
+                                     BorderBrush="#3E3E42"/>
+                            <Button Content="✖ Clear" 
+                                    Click="ClearSearchButton_Click"
+                                    Width="100"
+                                    Margin="5,0,0,0"
+                                    Background="#3E3E42"/>
+                        </StackPanel>
                     </StackPanel>
 
                     <ListBox Grid.Row="2" 
                              x:Name="PS5FilesListBox"
                              BorderThickness="0"
+                             SelectionMode="Extended"
                              MouseDoubleClick="PS5FilesListBox_MouseDoubleClick">
                         <ListBox.ContextMenu>
                             <ContextMenu>
+                                <MenuItem Header="⬇️ Download to PC" Click="DownloadMenuItem_Click"/>
+                                <Separator/>
                                 <MenuItem Header="📝 Rename" Click="RenameMenuItem_Click"/>
                                 <MenuItem Header="📋 Copy" Click="CopyMenuItem_Click"/>
                                 <MenuItem Header="✂️ Move" Click="MoveMenuItem_Click"/>
                                 <Separator/>
                                 <MenuItem Header="🗑️ Delete" Click="DeleteMenuItem_Click"/>
+                                <MenuItem Header="🗑️ Delete Selected" Click="DeleteSelectedMenuItem_Click"/>
                             </ContextMenu>
                         </ListBox.ContextMenu>
                         <ListBox.ItemTemplate>
@@ -281,14 +484,88 @@
                         </ListBox.ItemTemplate>
                     </ListBox>
 
-                    <StackPanel Grid.Row="3" 
-                                Margin="10">
-                        <TextBlock x:Name="StorageInfoText" 
-                                   Text="Storage: --" 
-                                   FontSize="12"
-                                   Foreground="#999999"
-                                   HorizontalAlignment="Center"/>
-                    </StackPanel>
+                    <Border Grid.Row="3" 
+                            Background="#2D2D30"
+                            BorderBrush="#3E3E42"
+                            BorderThickness="1"
+                            CornerRadius="4"
+                            Margin="10"
+                            Padding="10">
+                        <StackPanel>
+                            <TextBlock Text="💾 PS5 Storage" 
+                                       FontSize="12" 
+                                       FontWeight="Bold"
+                                       Foreground="#007ACC"
+                                       HorizontalAlignment="Center"
+                                       Margin="0,0,0,8"/>
+                            
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+                                
+                                <TextBlock Grid.Row="0" Grid.Column="0" 
+                                           Text="Free:" 
+                                           FontSize="11"
+                                           Foreground="#999999"
+                                           Margin="0,0,8,4"/>
+                                <TextBlock Grid.Row="0" Grid.Column="1" 
+                                           x:Name="StorageFreeText"
+                                           Text="--" 
+                                           FontSize="11"
+                                           Foreground="#4EC9B0"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Right"
+                                           Margin="0,0,0,4"/>
+                                
+                                <TextBlock Grid.Row="1" Grid.Column="0" 
+                                           Text="Used:" 
+                                           FontSize="11"
+                                           Foreground="#999999"
+                                           Margin="0,0,8,4"/>
+                                <TextBlock Grid.Row="1" Grid.Column="1" 
+                                           x:Name="StorageUsedText"
+                                           Text="--" 
+                                           FontSize="11"
+                                           Foreground="#CE9178"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Right"
+                                           Margin="0,0,0,4"/>
+                                
+                                <TextBlock Grid.Row="2" Grid.Column="0" 
+                                           Text="Total:" 
+                                           FontSize="11"
+                                           Foreground="#999999"
+                                           Margin="0,0,8,4"/>
+                                <TextBlock Grid.Row="2" Grid.Column="1" 
+                                           x:Name="StorageTotalText"
+                                           Text="--" 
+                                           FontSize="11"
+                                           Foreground="White"
+                                           FontWeight="Bold"
+                                           HorizontalAlignment="Right"
+                                           Margin="0,0,0,4"/>
+                                
+                                <!-- Progress Bar -->
+                                <ProgressBar Grid.Row="3" Grid.ColumnSpan="2"
+                                             x:Name="StorageProgressBar"
+                                             Height="6"
+                                             Margin="0,6,0,0"
+                                             Minimum="0"
+                                             Maximum="100"
+                                             Value="0"
+                                             Foreground="#CE9178"
+                                             Background="#3E3E42"/>
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                 </Grid>
             </Border>
 
@@ -326,6 +603,9 @@
                              Padding="10"
                              TextWrapping="Wrap"
                              IsReadOnly="True"
+                             IsReadOnlyCaretVisible="False"
+                             Focusable="False"
+                             Cursor="Arrow"
                              VerticalScrollBarVisibility="Auto"
                              HorizontalScrollBarVisibility="Auto"/>
 
