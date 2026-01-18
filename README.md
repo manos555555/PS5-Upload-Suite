@@ -8,8 +8,6 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s
 
 ⭐ **NEW in v2.1.0:** Massive Upload Speed Boost (88-110 MB/s), Transfer History with Auto-Clear, Maximized Window UI!
 
-![PS5 Upload Client](screenshots/screenshot1.png)
-![Upload in Progress](screenshots/screenshot2.png)
 ![Transfer History & Multi-PS5 Support](screenshots/screenshot3.png)
 
 ---
