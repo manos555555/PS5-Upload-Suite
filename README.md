@@ -2,11 +2,11 @@
 
 **By Manos**
 
-**Version 2.2.0 - Bug Fix & Mobile Release**
+**Version 3.0.0 - Bug Fix & Mobile Release**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s** aggregate upload speeds using optimized parallel connections and direct syscalls.
 
-⭐ **NEW in v2.2.0:** Critical path fix for directory creation, Android Mobile App, improved stability!
+⭐ **NEW in v3.0.0:** Critical path fix for directory creation, Android Mobile App, improved stability!
 
 📱 **NEW:** Android Mobile Client now available!
 
@@ -219,7 +219,7 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
 
 ---
 
-## 📝 What's New in v2.2.0
+## 📝 What's New in v3.0.0
 
 ### 🐛 Critical Bug Fixes:
 
