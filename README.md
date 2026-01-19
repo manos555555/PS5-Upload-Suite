@@ -10,8 +10,6 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s
 
 📱 **NEW:** Android Mobile Client now available!
 
-![PS5 Upload Client](screenshots/screenshot1.png)
-![Upload in Progress](screenshots/screenshot2.png)
 ![Transfer History & Multi-PS5 Support](screenshots/screenshot3.png)
 ![Mobile App](screenshots/mobile_screenshot.jpg)
 
