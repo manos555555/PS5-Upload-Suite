@@ -69,6 +69,23 @@ namespace PS5Upload
         // Duplicate file handling
         private enum DuplicateAction { Ask, Replace, Skip, ReplaceAll, SkipAll }
         private DuplicateAction _duplicateAction = DuplicateAction.Ask;
+        
+        // Helper to normalize PS5 paths and prevent double slashes
+        private static string NormalizePath(string path)
+        {
+            if (string.IsNullOrEmpty(path)) return "/";
+            // Replace multiple slashes with single slash, but preserve leading slash
+            while (path.Contains("//"))
+            {
+                path = path.Replace("//", "/");
+            }
+            return path;
+        }
+        
+        private static string CombinePath(string basePath, string name)
+        {
+            return NormalizePath(basePath.TrimEnd('/') + "/" + name);
+        }
 
         public MainWindow()
         {
@@ -661,11 +678,11 @@ namespace PS5Upload
             {
                 if (item.IsDirectory)
                 {
-                    CollectFilesFromDirectory(item.FullPath, _currentPS5Path + "/" + item.Name, allFiles);
+                    CollectFilesFromDirectory(item.FullPath, CombinePath(_currentPS5Path, item.Name), allFiles);
                 }
                 else
                 {
-                    allFiles.Add((item.FullPath, _currentPS5Path + "/" + item.Name));
+                    allFiles.Add((item.FullPath, CombinePath(_currentPS5Path, item.Name)));
                 }
             }
             
@@ -1158,13 +1175,13 @@ namespace PS5Upload
             foreach (string file in Directory.GetFiles(localDir))
             {
                 FileInfo info = new FileInfo(file);
-                files.Add((file, remoteDir + "/" + info.Name));
+                files.Add((file, CombinePath(remoteDir, info.Name)));
             }
             
             foreach (string dir in Directory.GetDirectories(localDir))
             {
                 DirectoryInfo info = new DirectoryInfo(dir);
-                CollectFilesFromDirectory(dir, remoteDir + "/" + info.Name, files);
+                CollectFilesFromDirectory(dir, CombinePath(remoteDir, info.Name), files);
             }
         }
 
@@ -1459,7 +1476,7 @@ namespace PS5Upload
 
                 var textBox = new TextBox
                 {
-                    Text = _currentPS5Path + "/" + item.Name,
+                    Text = CombinePath(_currentPS5Path, item.Name),
                     Width = 350
                 };
 
@@ -1692,7 +1709,7 @@ namespace PS5Upload
 
                 var textBox = new TextBox
                 {
-                    Text = _currentPS5Path + "/" + item.Name,
+                    Text = CombinePath(_currentPS5Path, item.Name),
                     Width = 350
                 };
 

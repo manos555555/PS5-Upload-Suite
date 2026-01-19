@@ -284,6 +284,27 @@ void send_error(int sock, const char *msg) {
     send_response(sock, RESP_ERROR, msg, len);
 }
 
+// Normalize path by removing double slashes
+void normalize_path(char *path) {
+    char *src = path;
+    char *dst = path;
+    int prev_slash = 0;
+    
+    while (*src) {
+        if (*src == '/') {
+            if (!prev_slash) {
+                *dst++ = *src;
+            }
+            prev_slash = 1;
+        } else {
+            *dst++ = *src;
+            prev_slash = 0;
+        }
+        src++;
+    }
+    *dst = '\0';
+}
+
 // Recursive directory creation
 int mkdir_recursive(const char *path) {
     char tmp[MAX_PATH];
@@ -291,6 +312,7 @@ int mkdir_recursive(const char *path) {
     size_t len;
 
     snprintf(tmp, sizeof(tmp), "%s", path);
+    normalize_path(tmp);  // Remove any double slashes
     len = strlen(tmp);
     if (tmp[len - 1] == '/') {
         tmp[len - 1] = 0;
@@ -475,7 +497,11 @@ void handle_list_storage(client_session_t *session) {
 
 // Handle LIST_DIR - Optimized version using d_type only (no stat for dirs)
 void handle_list_dir(client_session_t *session, const char *path) {
-    DIR *dir = opendir(path);
+    char norm_path[MAX_PATH];
+    snprintf(norm_path, sizeof(norm_path), "%s", path);
+    normalize_path(norm_path);
+    
+    DIR *dir = opendir(norm_path);
     if (!dir) {
         int32_t count = 0;
         send_response(session->sock, RESP_DATA, &count, 4);
@@ -514,7 +540,7 @@ void handle_list_dir(client_session_t *session, const char *path) {
         uint64_t size = 0;
         uint64_t timestamp = 0;
         
-        snprintf(full_path, sizeof(full_path), "%s/%s", path, entry->d_name);
+        snprintf(full_path, sizeof(full_path), "%s/%s", norm_path, entry->d_name);
         struct stat st;
         
         if (entry->d_type == DT_DIR) {
@@ -567,7 +593,11 @@ void handle_create_dir(client_session_t *session, const char *path) {
 
 // Handle DELETE_FILE
 void handle_delete_file(client_session_t *session, const char *path) {
-    if (unlink(path) == 0) {
+    char normalized_path[MAX_PATH];
+    snprintf(normalized_path, sizeof(normalized_path), "%s", path);
+    normalize_path(normalized_path);
+    
+    if (unlink(normalized_path) == 0) {
         send_ok(session->sock, "File deleted");
     } else {
         send_error(session->sock, "Failed to delete file");
@@ -706,7 +736,13 @@ void handle_rename(client_session_t *session, const uint8_t *data, uint32_t data
     }
     const char *new_path = (const char *)(data + old_len + 1);
     
-    if (rename(old_path, new_path) == 0) {
+    char norm_old[MAX_PATH], norm_new[MAX_PATH];
+    snprintf(norm_old, sizeof(norm_old), "%s", old_path);
+    snprintf(norm_new, sizeof(norm_new), "%s", new_path);
+    normalize_path(norm_old);
+    normalize_path(norm_new);
+    
+    if (rename(norm_old, norm_new) == 0) {
         send_ok(session->sock, "Renamed successfully");
     } else {
         send_error(session->sock, "Failed to rename");
@@ -723,13 +759,19 @@ void handle_copy_file(client_session_t *session, const uint8_t *data, uint32_t d
     }
     const char *dst = (const char *)(data + src_len + 1);
     
-    int src_fd = open(src, O_RDONLY);
+    char norm_src[MAX_PATH], norm_dst[MAX_PATH];
+    snprintf(norm_src, sizeof(norm_src), "%s", src);
+    snprintf(norm_dst, sizeof(norm_dst), "%s", dst);
+    normalize_path(norm_src);
+    normalize_path(norm_dst);
+    
+    int src_fd = open(norm_src, O_RDONLY);
     if (src_fd < 0) {
         send_error(session->sock, "Cannot open source file");
         return;
     }
     
-    int dst_fd = open(dst, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+    int dst_fd = open(norm_dst, O_WRONLY | O_CREAT | O_TRUNC, 0777);
     if (dst_fd < 0) {
         close(src_fd);
         send_error(session->sock, "Cannot create destination file");
@@ -756,7 +798,7 @@ void handle_copy_file(client_session_t *session, const uint8_t *data, uint32_t d
     free(buf);
     close(src_fd);
     close(dst_fd);
-    chmod(dst, 0777);
+    chmod(norm_dst, 0777);
     
     if (success) {
         send_ok(session->sock, "File copied");
@@ -775,7 +817,13 @@ void handle_move_file(client_session_t *session, const uint8_t *data, uint32_t d
     }
     const char *dst = (const char *)(data + src_len + 1);
     
-    if (rename(src, dst) == 0) {
+    char norm_src[MAX_PATH], norm_dst[MAX_PATH];
+    snprintf(norm_src, sizeof(norm_src), "%s", src);
+    snprintf(norm_dst, sizeof(norm_dst), "%s", dst);
+    normalize_path(norm_src);
+    normalize_path(norm_dst);
+    
+    if (rename(norm_src, norm_dst) == 0) {
         send_ok(session->sock, "File moved");
     } else {
         send_error(session->sock, "Failed to move file");
@@ -802,6 +850,11 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
         return;
     }
     
+    // Normalize path to remove double slashes
+    char norm_path[MAX_PATH];
+    snprintf(norm_path, sizeof(norm_path), "%s", path);
+    normalize_path(norm_path);
+    
     uint64_t file_size;
     memcpy(&file_size, data + path_len + 1, 8);
     
@@ -813,7 +866,7 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     
     // Create parent directories
     char parent[MAX_PATH];
-    strncpy(parent, path, sizeof(parent) - 1);
+    strncpy(parent, norm_path, sizeof(parent) - 1);
     parent[sizeof(parent) - 1] = '\0';
     char *last_slash = strrchr(parent, '/');
     if (last_slash) {
@@ -822,7 +875,7 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     }
     
     // Get per-file mutex for this specific file
-    session->file_mutex = get_file_mutex(path);
+    session->file_mutex = get_file_mutex(norm_path);
     if (!session->file_mutex) {
         send_error(session->sock, "Cannot allocate file mutex");
         return;
@@ -836,14 +889,14 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     // For chunked uploads, we need to pre-allocate the file on first chunk
     if (chunk_offset > 0) {
         // Subsequent chunk: open existing file
-        session->upload_fd = open(path, O_WRONLY);
+        session->upload_fd = open(norm_path, O_WRONLY);
         if (session->upload_fd >= 0) {
             // Seek to chunk offset
             lseek(session->upload_fd, chunk_offset, SEEK_SET);
         }
     } else {
         // First chunk or small file: create new file
-        session->upload_fd = open(path, O_WRONLY | O_CREAT | O_TRUNC, 0777);
+        session->upload_fd = open(norm_path, O_WRONLY | O_CREAT | O_TRUNC, 0777);
         if (session->upload_fd >= 0 && file_size > 100 * 1024 * 1024) {
             // Large file - pre-allocate full size for chunked upload
             if (lseek(session->upload_fd, file_size - 1, SEEK_SET) < 0 || write(session->upload_fd, "", 1) != 1) {
@@ -851,9 +904,9 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
                 close(session->upload_fd);
                 session->upload_fd = -1;
                 pthread_mutex_unlock(session->file_mutex);
-                release_file_mutex(path);
+                release_file_mutex(norm_path);
                 session->file_mutex = NULL;
-                unlink(path); // Remove partial file
+                unlink(norm_path); // Remove partial file
                 send_error(session->sock, "Disk full - cannot pre-allocate file");
                 return;
             }
@@ -866,13 +919,13 @@ void handle_start_upload(client_session_t *session, const uint8_t *data, uint32_
     pthread_mutex_unlock(session->file_mutex);
     
     if (session->upload_fd < 0) {
-        release_file_mutex(path);
+        release_file_mutex(norm_path);
         session->file_mutex = NULL;
         send_error(session->sock, "Cannot create file");
         return;
     }
     
-    strncpy(session->upload_path, path, sizeof(session->upload_path) - 1);
+    strncpy(session->upload_path, norm_path, sizeof(session->upload_path) - 1);
     session->upload_size = file_size;
     session->upload_received = chunk_offset;
     
@@ -935,7 +988,11 @@ void handle_end_upload(client_session_t *session) {
 
 // Handle DOWNLOAD_FILE
 void handle_download_file(client_session_t *session, const char *path) {
-    int fd = open(path, O_RDONLY);
+    char norm_path[MAX_PATH];
+    snprintf(norm_path, sizeof(norm_path), "%s", path);
+    normalize_path(norm_path);
+    
+    int fd = open(norm_path, O_RDONLY);
     if (fd < 0) {
         send_error(session->sock, "Cannot open file");
         return;

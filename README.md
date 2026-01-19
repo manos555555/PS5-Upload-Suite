@@ -2,11 +2,13 @@
 
 **By Manos**
 
-**Version 2.1.0 - Performance & UX Release**
+**Version 2.2.0 - Bug Fix & Mobile Release**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s** aggregate upload speeds using optimized parallel connections and direct syscalls.
 
-⭐ **NEW in v2.1.0:** Massive Upload Speed Boost (88-110 MB/s), Transfer History with Auto-Clear, Maximized Window UI!
+⭐ **NEW in v2.2.0:** Critical path fix for directory creation, Android Mobile App, improved stability!
+
+📱 **NEW:** Android Mobile Client now available!
 
 ![Transfer History & Multi-PS5 Support](screenshots/screenshot3.png)
 
@@ -41,6 +43,20 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s
   - Auto-clear history on startup option
   - Storage space display
   - Recursive folder upload
+
+### 3. 📱 Android Mobile Client (NEW in v2.2.0)
+- **File:** `mobile/bin/Release/net6.0-android/publish/com.ps5tools.uploadsuite-Signed.apk`
+- **Framework:** .NET MAUI
+- **Features:**
+  - **Multi-PS5 Profiles** - Save multiple PS5 with different IPs
+  - Upload files from phone to PS5
+  - Download files from PS5 to phone
+  - Browse PS5 filesystem
+  - Delete files/folders
+  - Favorites for quick navigation
+  - Debug Log with Copy function
+  - Transfer History
+  - Share downloaded files
 
 ---
 
@@ -200,6 +216,33 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
 - Server only accepts connections from local network
 - No authentication required (local network only)
 - SHUTDOWN command only works from localhost
+
+---
+
+## 📝 What's New in v2.2.0
+
+### 🐛 Critical Bug Fixes:
+
+#### 1. 🔧 Path Normalization Fix
+- **Fixed:** Double-slash paths (`//mnt/ext1/...`) that caused directory creation to fail
+- **Affected:** All file operations (upload, download, delete, rename, copy, move)
+- **Solution:** Added `NormalizePath()` function in both client and server
+- **Result:** 100% reliable directory creation and file uploads
+
+#### 2. 📱 Android Mobile Client
+- **NEW:** Full-featured Android app for PS5 file management
+- **Multi-PS5 Profiles** - Save and switch between multiple PS5 consoles
+- Upload files from phone to PS5
+- Download files from PS5 with Share option
+- Browse PS5 filesystem
+- Favorites for quick navigation
+- Debug Log with Copy to clipboard
+- Transfer History tracking
+
+#### 3. 🛠️ Server Improvements
+- Path normalization in all handler functions
+- More robust error handling
+- Improved stability for parallel uploads
 
 ---
 
