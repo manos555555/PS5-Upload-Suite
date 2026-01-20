@@ -2,13 +2,13 @@
 
 **By Manos**
 
-**Version 3.0.0 - Bug Fix & Mobile Release**
+**Version 3.1.0 - Parallel Chunked Uploads & Real-time Progress**
 
-Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s** aggregate upload speeds using optimized parallel connections and direct syscalls.
+Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
 
-⭐ **NEW in v3.0.0:** Critical path fix for directory creation, Android Mobile App, improved stability!
+⭐ **NEW in v3.1.0:** Parallel chunked uploads (2x faster!), real-time speed/ETA display, storage improvements!
 
-📱 **NEW:** Android Mobile Client now available!
+📱 **Android Mobile Client available!**
 
 ![Transfer History & Multi-PS5 Support](screenshots/screenshot3.png)
 ![Mobile App](screenshots/mobile_screenshot.jpg)
@@ -119,12 +119,12 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **110+ MB/s
 
 ## 📊 Performance
 
-### v2.1.0 Optimized Results:
-- ✅ **88-110 MB/s** aggregate upload speed (8 parallel connections)
-- ✅ **11-14 MB/s** per file sustained (Ethernet)
-- ✅ **Peak bursts:** 610 MB/s - 2.05 GB/s (disk cache)
-- ✅ **Direct syscalls** - Bypasses stdio buffering for maximum speed
-- ✅ **Zero errors** - 100% success rate
+### v3.1.0 Optimized Results:
+- ✅ **104+ MB/s** upload speed for large files (parallel chunked uploads)
+- ✅ **4 parallel chunk connections** for maximum throughput
+- ✅ **500MB chunks** - optimal size for PS5 disk performance
+- ✅ **Real-time progress** - Speed/ETA updates during upload
+- ✅ **Zero chunk failures** - Fixed race conditions
 - ✅ **Fully responsive UI** throughout upload
 - ✅ **No memory leaks** - stable operation
 
@@ -217,6 +217,30 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
 - Server only accepts connections from local network
 - No authentication required (local network only)
 - SHUTDOWN command only works from localhost
+
+---
+
+## 📝 What's New in v3.1.0
+
+### 🚀 Performance Improvements:
+
+#### 1. ⚡ Parallel Chunked Uploads (104 MB/s!)
+- **Large files (>100MB)** are now split into 500MB chunks
+- **4 parallel connections** upload chunks simultaneously
+- **Result:** ~104 MB/s upload speed (2x faster than before!)
+- **Fixed race condition:** First chunk creates file before others start
+- **Fixed closure bug:** Correct offset/size capture for parallel tasks
+
+#### 2. 📊 Real-time Progress Display
+- **Speed display** now updates in real-time during chunked uploads
+- **ETA display** shows accurate time remaining
+- **Progress bar** correctly shows 0-100% for chunked files
+- No more speed dropping to 0 during large file uploads
+
+#### 3. 💾 Storage Display Improvements
+- **Changed label** to "Data Storage (/data)" for clarity
+- **Uses statfs with f_bavail** for more accurate available space
+- **Real-time updates** every 5 seconds when connected
 
 ---
 
