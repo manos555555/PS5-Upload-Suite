@@ -15,49 +15,32 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s
 
 ---
 
-## 📦 What's Included
+## 📦 Downloads
+
+Download the latest release from the [Releases](https://github.com/manos555555/PS5-Upload-Suite/releases) page:
 
 ### 1. PS5 Server Payload
-- **File:** `payload/ps5_upload_server.elf`
+- **File:** `ps5_upload_server.elf`
 - **Port:** 9113
-- **Protocol:** Custom binary (optimized for speed)
-- **Features:**
-  - 16MB socket buffers (optimized for maximum throughput)
-  - SO_NOSIGPIPE enabled
-  - TCP_NODELAY for low latency
-  - Direct `write()` syscalls (bypasses stdio buffering for 80-110 MB/s upload)
-  - Per-file mutex locking (parallel writes without race conditions)
-  - File pre-allocation for large files (reduces fragmentation)
-  - Multi-threaded client handling
+- High-speed custom binary protocol
+- 16MB socket buffers for maximum throughput
+- Multi-threaded client handling
 
 ### 2. Windows GUI Client
-- **File:** `client/bin/Release/net6.0-windows/win-x64/publish/PS5Upload.exe`
-- **Framework:** .NET 6.0 WPF
-- **Features:**
-  - Modern dark theme UI (opens maximized for better visibility)
-  - Drag & drop file/folder upload
-  - Browse PS5 filesystem
-  - Real-time upload progress with speed tracking
-  - 8 parallel large file uploads (optimal aggregate throughput)
-  - 128MB TCP buffers for maximum network performance
-  - Transfer History with success/failed tracking
-  - Auto-clear history on startup option
-  - Storage space display
-  - Recursive folder upload
+- **File:** `PS5Upload.exe`
+- Self-contained executable (no .NET installation required)
+- Modern dark theme UI
+- Drag & drop file/folder upload
+- Real-time upload progress with speed tracking
+- Transfer History with success/failed tracking
+- Storage space display
 
-### 3. 📱 Android Mobile Client (NEW in v2.2.0)
-- **File:** `mobile/bin/Release/net6.0-android/publish/com.ps5tools.uploadsuite-Signed.apk`
-- **Framework:** .NET MAUI
-- **Features:**
-  - **Multi-PS5 Profiles** - Save multiple PS5 with different IPs
-  - Upload files from phone to PS5
-  - Download files from PS5 to phone
-  - Browse PS5 filesystem
-  - Delete files/folders
-  - Favorites for quick navigation
-  - Debug Log with Copy function
-  - Transfer History
-  - Share downloaded files
+### 3. 📱 Android Mobile Client
+- **File:** `PS5UploadMobile.apk`
+- Upload/download files from your phone
+- Multi-PS5 Profiles support
+- Browse PS5 filesystem
+- Favorites for quick navigation
 
 ---
 
@@ -65,17 +48,13 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s
 
 ### Step 1: Load PS5 Payload
 
-1. Copy `payload/ps5_upload_server.elf` to your PS5:
-   ```
-   /data/etaHEN/payloads/ps5_upload_server.elf
-   ```
+1. Download `ps5_upload_server.elf` from the [Releases](https://github.com/manos555555/PS5-Upload-Suite/releases) page
 
-2. Load the payload with elfldr
+2. Copy it to your PS5: `/data/etaHEN/payloads/ps5_upload_server.elf`
 
-3. You should see notification:
-   ```
-   PS5 Upload Server: 192.168.0.XXX:9113 - By Manos
-   ```
+3. Load the payload with elfldr
+
+4. You should see notification: `PS5 Upload Server: 192.168.0.XXX:9113 - By Manos`
 
 ### Step 2: Run Windows Client
 
@@ -140,55 +119,6 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s
 
 **Note:** Upload speeds depend on network quality and PS5 disk write performance. WiFi has ~40-60% overhead compared to Ethernet.
 
----
-
-## 🔧 Building from Source
-
-### PS5 Payload
-
-Requirements:
-- PS5 SDK (prospero-clang)
-- WSL or Linux
-
-```bash
-cd payload
-bash compile.sh
-```
-
-### Windows Client
-
-Requirements:
-- .NET 6.0 SDK or later
-- Windows 10/11
-
-```cmd
-cd client
-build.bat
-```
-
-Or manually:
-```cmd
-dotnet publish -c Release -r win-x64 --self-contained true
-```
-
----
-
-## 📋 Protocol Specification
-
-See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
-
-### Commands
-- `PING` - Test connection
-- `LIST_STORAGE` - Get storage info
-- `LIST_DIR` - List directory contents
-- `CREATE_DIR` - Create directory
-- `DELETE_FILE` - Delete file
-- `DELETE_DIR` - Delete directory
-- `START_UPLOAD` - Begin file upload
-- `UPLOAD_CHUNK` - Upload file chunk
-- `END_UPLOAD` - Finish upload
-- `DOWNLOAD_FILE` - Download file from PS5 (NEW v2.0)
-- `SHUTDOWN` - Shutdown server
 
 ---
 
@@ -345,7 +275,7 @@ See [PROTOCOL.md](PROTOCOL.md) for detailed protocol documentation.
 
 ## 📝 License
 
-MIT License - Free to use and modify
+This software is provided as-is for personal use.
 
 ---
 
