@@ -444,8 +444,10 @@ namespace PS5Upload
 
                         progress?.Report(new UploadProgress
                         {
-                            BytesSent = chunkOffset + totalSent,
-                            TotalBytes = fileInfo.Length,
+                            // For chunked uploads, report only bytes sent in THIS chunk
+                            // The caller will aggregate multiple chunks if needed
+                            BytesSent = totalSent,
+                            TotalBytes = uploadSize, // Size of this chunk, not total file
                             SpeedBytesPerSecond = currentSpeed,
                             AverageSpeedBytesPerSecond = avgSpeed,
                             ElapsedTime = elapsed,

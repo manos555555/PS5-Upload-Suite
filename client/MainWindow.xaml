@@ -493,7 +493,7 @@
                             Margin="10"
                             Padding="10">
                         <StackPanel>
-                            <TextBlock Text="💾 PS5 Storage" 
+                            <TextBlock Text="💾 Data Storage (/data)" 
                                        FontSize="12" 
                                        FontWeight="Bold"
                                        Foreground="#007ACC"

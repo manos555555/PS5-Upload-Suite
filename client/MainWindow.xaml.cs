@@ -100,12 +100,10 @@ namespace PS5Upload
             _uiUpdateTimer.Interval = TimeSpan.FromMilliseconds(500);
             _uiUpdateTimer.Tick += UiUpdateTimer_Tick;
             
-            // Initialize storage update timer (DISABLED - causes protocol conflicts)
-            // Storage will only update on connect and after operations complete
+            // Initialize storage update timer - updates every 5 seconds when not uploading
             _storageUpdateTimer = new DispatcherTimer();
-            _storageUpdateTimer.Interval = TimeSpan.FromSeconds(3);
+            _storageUpdateTimer.Interval = TimeSpan.FromSeconds(5);
             _storageUpdateTimer.Tick += StorageUpdateTimer_Tick;
-            // DO NOT START - causes hanging during upload/delete operations
             
             // Subscribe to progress messages from protocol
             _protocol.OnProgressMessage += (message) =>
@@ -157,13 +155,30 @@ namespace PS5Upload
                 if (storageList.Length == 0)
                     return;
 
-                // Get /data storage (main PS5 storage)
-                var dataStorage = storageList.FirstOrDefault(s => s.Path == "/data");
-                if (dataStorage == null)
+                // Try to find the best storage to display
+                // Priority: /data (main PS5 storage), then any available
+                StorageInfo? targetStorage = null;
+                
+                // First try /data
+                targetStorage = storageList.FirstOrDefault(s => s.Path == "/data");
+                
+                // If /data not found, try other common paths
+                if (targetStorage == null || targetStorage.TotalBytes == 0)
+                {
+                    targetStorage = storageList.FirstOrDefault(s => s.Path.StartsWith("/user") && s.TotalBytes > 0);
+                }
+                
+                // If still not found, use the first one with valid data
+                if (targetStorage == null || targetStorage.TotalBytes == 0)
+                {
+                    targetStorage = storageList.FirstOrDefault(s => s.TotalBytes > 0);
+                }
+                
+                if (targetStorage == null)
                     return;
 
-                long totalBytes = dataStorage.TotalBytes;
-                long freeBytes = dataStorage.FreeBytes;
+                long totalBytes = targetStorage.TotalBytes;
+                long freeBytes = targetStorage.FreeBytes;
                 long usedBytes = totalBytes - freeBytes;
 
                 // Update UI
@@ -399,6 +414,7 @@ namespace PS5Upload
             if (_protocol.IsConnected)
             {
                 Log("🔌 Disconnecting from PS5...");
+                _storageUpdateTimer.Stop(); // Stop storage updates
                 _protocol.Disconnect();
                 
                 Dispatcher.Invoke(() =>
@@ -434,8 +450,9 @@ namespace PS5Upload
                         UploadButton.IsEnabled = true;
                     });
                     
-                    // Update storage info once on connect (no auto-reload)
+                    // Update storage info on connect and start real-time updates
                     await UpdateStorageInfoAsync();
+                    _storageUpdateTimer.Start();
                     
                     await LoadPS5DirectoryAsync(_currentPS5Path);
                 }
@@ -789,6 +806,7 @@ namespace PS5Upload
                 var fileChunksCompleted = new Dictionary<string, int>(); // Track completed chunks per file
                 var completedFiles = new HashSet<string>(); // Track which files are fully complete
                 var failedFiles = new Dictionary<string, int>(); // Track retry count per file
+                var permanentlyFailedFiles = new List<string>(); // Track files that exceeded max retries
                 const int MAX_RETRIES = 3; // Maximum retry attempts per file
 
                 UploadFileNameText.Text = $"Parallel upload: {MaxParallelUploads} connections";
@@ -921,6 +939,7 @@ namespace PS5Upload
                                 else
                                 {
                                     Log($"❌ Max retries exceeded, skipping: {Path.GetFileName(failedFilePath)}");
+                                    permanentlyFailedFiles.Add(failedFilePath);
                                 }
                             }
                             
@@ -1047,7 +1066,30 @@ namespace PS5Upload
                     Log("✅ Directory refreshed - uploaded files should now be visible");
                     
                     // Show success message AFTER refresh so user sees updated file list immediately
-                    MessageBox.Show($"Upload completed!\n\n{_totalFilesToUpload} files uploaded\nTotal: {FormatFileSize(_totalBytesUploaded)}", "Success", MessageBoxButton.OK, MessageBoxImage.Information);
+                    // Include failed files information if any
+                    int successfulFiles = _totalFilesToUpload - permanentlyFailedFiles.Count;
+                    string message = $"Upload completed!\n\n✅ Successful: {successfulFiles} files\nTotal: {FormatFileSize(_totalBytesUploaded)}";
+                    
+                    if (permanentlyFailedFiles.Count > 0)
+                    {
+                        message += $"\n\n❌ Failed: {permanentlyFailedFiles.Count} files";
+                        message += "\n\nFailed files:";
+                        foreach (var failedFile in permanentlyFailedFiles.Take(10))
+                        {
+                            message += $"\n• {Path.GetFileName(failedFile)}";
+                        }
+                        if (permanentlyFailedFiles.Count > 10)
+                        {
+                            message += $"\n... and {permanentlyFailedFiles.Count - 10} more";
+                        }
+                        message += "\n\nYou can retry these files by uploading them again.";
+                        
+                        MessageBox.Show(message, "Upload Completed with Errors", MessageBoxButton.OK, MessageBoxImage.Warning);
+                    }
+                    else
+                    {
+                        MessageBox.Show(message, "Upload Completed", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
                 }
                 else
                 {
@@ -1201,55 +1243,151 @@ namespace PS5Upload
                     Log($"⬆️ Uploading (chunked): {fileName} ({FormatFileSize(fileInfo.Length)})");
                     
                     long totalChunks = (fileInfo.Length + CHUNK_SIZE - 1) / CHUNK_SIZE;
+                    
+                    // OPTIMIZATION: Upload chunks in parallel for maximum speed
+                    // Use up to 4 parallel connections for chunked uploads
+                    const int MAX_PARALLEL_CHUNKS = 4;
+                    var chunkTasks = new List<Task<(bool success, long chunkIndex, long size)>>();
+                    var semaphore = new SemaphoreSlim(MAX_PARALLEL_CHUNKS);
                     bool allChunksSuccess = true;
+                    
+                    // Track progress per chunk to calculate total progress correctly
+                    var chunkProgress = new Dictionary<long, long>(); // chunkIndex -> bytes uploaded
+                    var progressLock = new object();
+                    
+                    // CRITICAL: First chunk (offset=0) must create the file before other chunks can write
+                    // Signal when first chunk has started and file is created
+                    var firstChunkStarted = new TaskCompletionSource<bool>();
                     
                     for (long chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++)
                     {
                         long offset = chunkIndex * CHUNK_SIZE;
                         long size = Math.Min(CHUNK_SIZE, fileInfo.Length - offset);
+                        long currentChunkIndex = chunkIndex; // Capture for closure
+                        
+                        lock (progressLock)
+                        {
+                            chunkProgress[currentChunkIndex] = 0;
+                        }
                         
                         Log($"📦 Uploading chunk {chunkIndex + 1}/{totalChunks}: {fileName} @ {FormatFileSize(offset)}");
                         
-                        // Progress reporting for chunked upload
-                        var progress = new Progress<UploadProgress>(p =>
+                        // Capture offset and size for closure - loop variables may change before task executes
+                        long chunkOffset = offset;
+                        long chunkSize = size;
+                        
+                        // Create task immediately - semaphore wait happens inside the task
+                        var chunkTask = Task.Run(async () =>
                         {
-                            double filePercent = fileInfo.Length > 0 ? (double)(offset + p.BytesSent) / fileInfo.Length * 100 : 0;
-                            
-                            lock (_progressLock)
+                            // CRITICAL: Non-first chunks must wait for first chunk to create the file
+                            // Otherwise they will fail trying to open a non-existent file
+                            if (currentChunkIndex > 0)
                             {
-                                _currentFileName = fileName;
-                                _currentFileBytes = offset + p.BytesSent;
-                                _currentFileTotalBytes = fileInfo.Length;
+                                await firstChunkStarted.Task;
+                                // Small delay to ensure file is fully created and pre-allocated
+                                await Task.Delay(100, cancellationToken);
                             }
                             
-                            Dispatcher.InvokeAsync(() =>
-                            {
-                                UploadProgressBar.Value = filePercent;
-                                UploadProgressText.Text = $"{FormatFileSize(offset + p.BytesSent)} / {FormatFileSize(fileInfo.Length)} ({filePercent:F1}%)";
-                            });
+                            // Wait for semaphore slot
+                            await semaphore.WaitAsync(cancellationToken);
                             
-                            // Log progress periodically (every 16MB for better visibility)
-                            if (p.BytesSent % (16 * 1024 * 1024) < 8 * 1024 * 1024 || p.BytesSent == p.TotalBytes)
+                            try
                             {
-                                Log($"📊 Chunk {chunkIndex + 1}/{totalChunks}: {FormatFileSize(p.BytesSent)}/{FormatFileSize(size)} @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
+                                // Create new connection for this chunk
+                                var chunkConnection = new PS5Protocol();
+                                if (!await chunkConnection.ConnectAsync(_ps5IpAddress, 9113))
+                                {
+                                    if (currentChunkIndex == 0) firstChunkStarted.TrySetResult(false);
+                                    return (false, currentChunkIndex, chunkSize);
+                                }
+                                
+                                // Signal that first chunk has connected and will create the file
+                                if (currentChunkIndex == 0)
+                                {
+                                    firstChunkStarted.TrySetResult(true);
+                                }
+                                
+                                // Progress reporting for this chunk - aggregate all chunks' progress
+                                // p.BytesSent is relative to THIS chunk (0 to chunk_size)
+                                // We need to track actual bytes uploaded for this chunk only
+                                var progress = new Progress<UploadProgress>(p =>
+                                {
+                                    lock (progressLock)
+                                    {
+                                        // Store only the bytes uploaded for THIS chunk (not offset+bytes)
+                                        long previousBytes = chunkProgress.ContainsKey(currentChunkIndex) ? chunkProgress[currentChunkIndex] : 0;
+                                        chunkProgress[currentChunkIndex] = p.BytesSent;
+                                        long bytesIncrease = p.BytesSent - previousBytes;
+                                        
+                                        // Calculate total progress from all chunks
+                                        long totalUploaded = 0;
+                                        foreach (var kvp in chunkProgress)
+                                        {
+                                            totalUploaded += kvp.Value;
+                                        }
+                                        
+                                        double filePercent = fileInfo.Length > 0 ? (double)totalUploaded / fileInfo.Length * 100 : 0;
+                                        
+                                        lock (_progressLock)
+                                        {
+                                            _currentFileName = fileName;
+                                            _currentFileBytes = totalUploaded;
+                                            _currentFileTotalBytes = fileInfo.Length;
+                                            
+                                            // Update total bytes in real-time for accurate speed display
+                                            // Add the bytes increase from this progress update
+                                            _totalBytesUploaded += bytesIncrease;
+                                        }
+                                        
+                                        // Calculate real-time speed and ETA
+                                        var elapsed = DateTime.Now - _uploadStartTime;
+                                        double speed = elapsed.TotalSeconds > 0 ? _totalBytesUploaded / elapsed.TotalSeconds : 0;
+                                        long remaining = _totalBytesToUpload - _totalBytesUploaded;
+                                        TimeSpan eta = speed > 0 ? TimeSpan.FromSeconds(remaining / speed) : TimeSpan.Zero;
+                                        
+                                        Dispatcher.InvokeAsync(() =>
+                                        {
+                                            UploadProgressBar.Value = Math.Min(100, filePercent); // Cap at 100%
+                                            UploadProgressText.Text = $"{FormatFileSize(totalUploaded)} / {FormatFileSize(fileInfo.Length)} ({filePercent:F1}%)";
+                                            
+                                            // Update speed and ETA in real-time
+                                            UploadSpeedText.Text = $"Speed: {FormatFileSize((long)speed)}/s | {_activeTaskCount} active";
+                                            UploadETAText.Text = $"ETA: {eta:hh\\:mm\\:ss} | Elapsed: {elapsed:hh\\:mm\\:ss}";
+                                        });
+                                    }
+                                });
+                                
+                                bool success = await chunkConnection.UploadFileAsync(localPath, remotePath, progress, cancellationToken, chunkOffset, chunkSize);
+                                
+                                chunkConnection.Disconnect();
+                                
+                                return (success, currentChunkIndex, chunkSize);
                             }
-                        });
+                            finally
+                            {
+                                semaphore.Release();
+                            }
+                        }, cancellationToken);
                         
-                        bool success = await connection.UploadFileAsync(localPath, remotePath, progress, cancellationToken, offset, size);
-                        
+                        chunkTasks.Add(chunkTask);
+                    }
+                    
+                    // Wait for all chunks to complete
+                    var results = await Task.WhenAll(chunkTasks);
+                    
+                    // Check results
+                    // Note: _totalBytesUploaded is already updated in real-time during progress callbacks
+                    foreach (var (success, chunkIndex, size) in results.OrderBy(r => r.chunkIndex))
+                    {
                         if (success)
                         {
                             Log($"✅ Chunk {chunkIndex + 1}/{totalChunks} complete: {fileName}");
-                            lock (_progressLock)
-                            {
-                                _totalBytesUploaded += size;
-                            }
+                            // Bytes already counted in real-time progress callback
                         }
                         else
                         {
                             Log($"❌ Chunk {chunkIndex + 1}/{totalChunks} failed: {fileName}");
                             allChunksSuccess = false;
-                            break;
                         }
                     }
                     

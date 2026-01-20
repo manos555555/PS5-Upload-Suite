@@ -15,6 +15,7 @@
 #include <arpa/inet.h>
 #include <sys/stat.h>
 #include <sys/statvfs.h>
+#include <sys/mount.h>
 #include <fcntl.h>
 #include <dirent.h>
 #include <pthread.h>
@@ -450,11 +451,24 @@ void handle_ping(client_session_t *session) {
 
 // Handle LIST_STORAGE
 void handle_list_storage(client_session_t *session) {
-    const char *mounts[] = {"/data", "/mnt/usb0", "/mnt/usb1", "/system", "/system_ex"};
+    // Include more paths to find PS5 main user storage
+    const char *mounts[] = {
+        "/user",           // Main user storage (games, apps)
+        "/user/home",      // User home directory
+        "/hostapp",        // Host app storage
+        "/data",           // Data partition (etaHEN uses this)
+        "/mnt/usb0",       // USB storage
+        "/mnt/usb1",       // USB storage
+        "/system",         // System partition
+        "/system_ex",      // Extended system partition
+        "/preinst",        // Pre-installed content
+        "/preinst2"        // Pre-installed content 2
+    };
+    const int num_mounts = 10;
     int mount_count = 0;
     
     // Count available mounts
-    for (int i = 0; i < 5; i++) {
+    for (int i = 0; i < num_mounts; i++) {
         struct stat st;
         if (stat(mounts[i], &st) == 0) {
             mount_count++;
@@ -473,12 +487,13 @@ void handle_list_storage(client_session_t *session) {
     memcpy(ptr, &mount_count, 4);
     ptr += 4;
     
-    for (int i = 0; i < 5; i++) {
-        struct statvfs vfs;
-        if (statvfs(mounts[i], &vfs) == 0) {
+    for (int i = 0; i < num_mounts; i++) {
+        struct statfs fs;
+        if (statfs(mounts[i], &fs) == 0) {
             uint16_t path_len = strlen(mounts[i]);
-            uint64_t total = (uint64_t)vfs.f_blocks * vfs.f_frsize;
-            uint64_t free = (uint64_t)vfs.f_bfree * vfs.f_frsize;
+            // Use f_bavail (available to non-root) like ps5upload does
+            uint64_t total = (uint64_t)fs.f_blocks * fs.f_bsize;
+            uint64_t free = (uint64_t)fs.f_bavail * fs.f_bsize;
             
             memcpy(ptr, &path_len, 2);
             ptr += 2;
