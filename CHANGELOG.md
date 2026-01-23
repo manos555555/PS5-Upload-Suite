@@ -1,5 +1,152 @@
 # Changelog - PS5 Upload Suite
 
+## Version 3.2.0 - Mobile Improvements & Bug Fixes (January 24, 2026)
+
+### 🎯 Improvements
+
+#### 💾 Accurate Storage Display
+- **Storage now matches PS5 UI** - Shows ~848 GB instead of raw 872 GB
+- **Accounts for reserved space** - Same calculation as PS5 system
+- Uses proper calculation: `(total_blocks - reserved) * block_size`
+
+#### 📱 Mobile App Improvements
+- **Multi-select mode** - Toggle button (☑️/✅) to select multiple files/folders
+- **Folder browser** - Visual folder picker for Copy/Move destinations with recursive navigation
+- **Sorted file list** - Folders always displayed at top, then files (alphabetically)
+- **Exit confirmation** - Prompt dialog when pressing back button
+- **Delete folders** - Now supports folder deletion (not just files)
+- **Batch operations** - Delete/download multiple items at once
+
+#### 3. 🐛 Bug Fixes
+- **Fixed empty folder deletion** - No more "Unexpected response" error when deleting empty directories
+- **Fixed Copy/Move crash** - No longer crashes when selecting destination folder (saved file info before browsing)
+- **Fixed multi-select count** - Correct item count in delete confirmation dialog
+- **Fixed folder navigation** - Can enter folders after actions complete (auto-exit multi-select mode)
+
+---
+
+## Version 3.1.0 - Parallel Chunked Uploads (January 2026)
+
+### 🚀 Performance Improvements
+
+#### 1. ⚡ Parallel Chunked Uploads (104 MB/s!)
+- **Large files (>100MB)** are now split into 500MB chunks
+- **4 parallel connections** upload chunks simultaneously
+- **Result:** ~104 MB/s upload speed (2x faster than before!)
+- **Fixed race condition:** First chunk creates file before others start
+- **Fixed closure bug:** Correct offset/size capture for parallel tasks
+
+#### 2. 📊 Real-time Progress Display
+- **Speed display** now updates in real-time during chunked uploads
+- **ETA display** shows accurate time remaining
+- **Progress bar** correctly shows 0-100% for chunked files
+- No more speed dropping to 0 during large file uploads
+
+#### 3. 💾 Storage Display Improvements
+- **Changed label** to "Data Storage (/data)" for clarity
+- **Uses statfs with f_bavail** for more accurate available space
+- **Real-time updates** every 5 seconds when connected
+
+---
+
+## Version 3.0.0 - Mobile Client & Path Fixes (January 2026)
+
+### 🐛 Critical Bug Fixes
+
+#### 1. 🔧 Path Normalization Fix
+- **Fixed:** Double-slash paths (`//mnt/ext1/...`) that caused directory creation to fail
+- **Affected:** All file operations (upload, download, delete, rename, copy, move)
+- **Solution:** Added `NormalizePath()` function in both client and server
+- **Result:** 100% reliable directory creation and file uploads
+
+#### 2. 📱 Android Mobile Client
+- **NEW:** Full-featured Android app for PS5 file management
+- **Multi-PS5 Profiles** - Save and switch between multiple PS5 consoles
+- Upload files from phone to PS5
+- Download files from PS5 with Share option
+- Browse PS5 filesystem
+- Create new folders
+- Rename files/folders
+- Copy files/folders
+- Move files/folders
+- Delete files
+- Favorites for quick navigation
+- Debug Log with Copy to clipboard
+- Transfer History tracking
+
+#### 3. 🛠️ Server Improvements
+- Path normalization in all handler functions
+- More robust error handling
+- Improved stability for parallel uploads
+
+---
+
+## Version 2.1.0 - Performance & History (January 2026)
+
+### 🚀 Performance Optimizations
+
+#### 1. ⚡ Massive Upload Speed Boost (88-110 MB/s)
+- **Server-side:** Replaced `fwrite()` with direct `write()` syscalls
+- **Client-side:** 8 parallel large file uploads (optimal for PS5 disk)
+- **Result:** 80-110 MB/s aggregate upload speed on Gigabit Ethernet
+- **Peak bursts:** Up to 2.05 GB/s when hitting disk cache
+- **Per-file:** 11-14 MB/s sustained per connection
+
+#### 2. 📊 Transfer History
+- Complete history of all uploads and downloads
+- Success/Failed status tracking with error messages
+- Speed statistics (average, min, max)
+- Export to CSV/JSON for analysis
+- Persistent storage across sessions
+
+#### 3. 🔄 Auto-Clear History on Startup
+- Optional checkbox to clear history automatically
+- Useful for keeping UI clean between sessions
+- Setting saved in `ps5_upload_settings.json`
+
+#### 4. 🖥️ Maximized Window UI
+- Application opens in full-screen mode by default
+- Better visibility for large file transfers
+- Can be resized/restored as needed
+
+### Technical Improvements
+- ✅ **16MB socket buffers** (up from 4MB) for maximum throughput
+- ✅ **Per-file mutex locking** - Parallel writes without race conditions
+- ✅ **File pre-allocation** - Reduces disk fragmentation for large files
+- ✅ **Direct syscalls** - Bypasses stdio buffering overhead
+
+---
+
+## Version 2.0.0 - Download & Multi-PS5 (January 2026)
+
+### 🎉 4 Major New Features
+
+#### 1. 📥 Download Files (PS5 → PC)
+- Right-click any file → "⬇️ Download to PC"
+- Save file dialog for destination selection
+- Real-time progress tracking with speed display
+- Optimized with sendfile for maximum speed
+
+#### 2. 🔍 File Search
+- Search box in PS5 Files panel
+- Real-time filtering as you type
+- Case-insensitive search
+- Quick "Clear" button to reset
+
+#### 3. ⭐ Favorites/Bookmarks
+- Save frequently used PS5 paths
+- Quick dropdown navigation
+- Add/Remove favorite paths
+- Persistent storage in JSON
+
+#### 4. 🎮 Multi-PS5 Support
+- Save multiple PS5 profiles (IP + name)
+- Quick switch between different PS5 consoles
+- Dropdown profile selector
+- Persistent profile storage
+
+---
+
 ## Version 1.3.0 - Stable Release (January 13, 2026)
 
 ### 🎯 Major Achievement
