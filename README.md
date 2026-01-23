@@ -2,11 +2,11 @@
 
 **By Manos**
 
-**Version 3.1.0 - Parallel Chunked Uploads & Real-time Progress**
+**Version 3.2.0 - Mobile Improvements & Bug Fixes**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
 
-⭐ **NEW in v3.1.0:** Parallel chunked uploads (2x faster!), real-time speed/ETA display, storage improvements!
+⭐ **NEW in v3.2.0:** Accurate storage display (848 GB), mobile multi-select, folder browser, bug fixes!
 
 📱 **Android Mobile Client available!**
 
@@ -147,6 +147,30 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 - Server only accepts connections from local network
 - No authentication required (local network only)
 - SHUTDOWN command only works from localhost
+
+---
+
+## 📝 What's New in v3.2.0
+
+### 🎯 Improvements:
+
+#### 1. 💾 Accurate Storage Display
+- **Storage now matches PS5 UI** - Shows ~848 GB instead of raw 872 GB
+- **Accounts for reserved space** - Same calculation as PS5 system
+
+#### 2. 📱 Mobile App Improvements
+- **Multi-select mode** - Toggle button to select multiple files/folders
+- **Folder browser** - Visual folder picker for Copy/Move destinations
+- **Sorted file list** - Folders always displayed at top
+- **Exit confirmation** - Prompt when pressing back button
+- **Delete folders** - Now supports folder deletion (not just files)
+- **Batch operations** - Delete/download multiple items at once
+
+#### 3. 🐛 Bug Fixes
+- **Fixed empty folder deletion** - No more "Unexpected response" error
+- **Fixed Copy/Move crash** - No longer crashes when selecting destination
+- **Fixed multi-select count** - Correct item count in delete confirmation
+- **Fixed folder navigation** - Can enter folders after actions complete
 
 ---
 
