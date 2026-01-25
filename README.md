@@ -8,6 +8,7 @@ Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s
 
 ⭐ **NEW in v3.3.0:** 
 - 🔍 **Smart Search** - Full filesystem indexing with instant search (wildcards, size filters)
+- 💻 **Shell Terminal** - Execute commands directly on PS5 with real-time output
 - 📱 **Mobile Search** - Search feature now available on Android app
 - 🚀 **Navigate from Search** - Double-click search results to jump to folder
 - ⚡ **Lightning Fast** - Search 200,000+ files instantly
