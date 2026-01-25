@@ -2,11 +2,15 @@
 
 **By Manos**
 
-**Version 3.2.0 - Mobile Improvements & Bug Fixes**
+**Version 3.3.0 - Smart Search & Enhanced Mobile**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
 
-⭐ **NEW in v3.2.0:** Accurate storage display (848 GB), mobile multi-select, folder browser, bug fixes!
+⭐ **NEW in v3.3.0:** 
+- 🔍 **Smart Search** - Full filesystem indexing with instant search (wildcards, size filters)
+- 📱 **Mobile Search** - Search feature now available on Android app
+- 🚀 **Navigate from Search** - Double-click search results to jump to folder
+- ⚡ **Lightning Fast** - Search 200,000+ files instantly
 
 📱 **Android Mobile Client available!**
 
@@ -33,7 +37,7 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 - Drag & drop file/folder upload
 - Real-time upload progress with speed tracking
 - Transfer History with success/failed tracking
-- Storage space display
+- Privacy-focused (no storage monitoring)
 
 ### 3. 📱 Android Mobile Client
 - **File:** `PS5UploadMobile.apk`
@@ -84,15 +88,24 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 ✅ **Drag & Drop** - Files and folders  
 ✅ **Browse PS5** - Navigate filesystem  
 ✅ **Real-time Progress** - Speed & percentage tracking  
-✅ **Optimized Upload** - 8 parallel connections for 88-110 MB/s aggregate speed (NEW v2.1)  
-✅ **Transfer History** - Track all uploads/downloads with success/failed status (NEW v2.1)  
-✅ **Auto-Clear History** - Optional auto-clear on startup (NEW v2.1)  
+✅ **Optimized Upload** - 8 parallel connections for 88-110 MB/s aggregate speed  
+✅ **Transfer History** - Track all uploads/downloads with success/failed status  
+✅ **Auto-Clear History** - Optional auto-clear on startup  
 ✅ **Folder Upload** - Recursive directory upload  
-✅ **Storage Info** - Free space display  
-✅ **Download Files** - Download from PS5 to PC (v2.0)  
-✅ **File Search** - Real-time filtering of PS5 files (v2.0)  
-✅ **Favorites/Bookmarks** - Quick navigation to saved paths (v2.0)  
-✅ **Multi-PS5 Support** - Save and switch between multiple PS5 profiles (v2.0)  
+✅ **Download Files** - Download from PS5 to PC  
+✅ **🔍 Smart Search** - Full filesystem indexing with instant search (NEW v3.3)  
+  - Wildcard support: `*.pkg`, `*loader*`, `game*.bin`
+  - Size filters: `size:>1GB`, `size:<100MB`
+  - Case-insensitive matching
+  - Search both filename and full path
+  - Double-click to navigate to folder
+✅ **💻 Shell Terminal** - Execute commands directly on PS5 (NEW v3.3)  
+  - Run system commands remotely
+  - Real-time output display
+  - Command history
+  - Working directory support
+✅ **Favorites/Bookmarks** - Quick navigation to saved paths  
+✅ **Multi-PS5 Support** - Save and switch between multiple PS5 profiles  
 
 ---
 

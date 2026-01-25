@@ -1,5 +1,64 @@
 # Changelog - PS5 Upload Suite
 
+## Version 3.3.0 - Smart Search & Enhanced Mobile (January 26, 2026)
+
+### 🔍 Smart Search Feature
+- **Full Filesystem Indexing** - Index entire PS5 filesystem (200,000+ files)
+- **Instant Search** - Lightning-fast search with wildcards (`*.pkg`, `*loader*`)
+- **Size Filters** - Search by file size (`size:>1GB`, `size:<100MB`)
+- **Case-Insensitive** - Matches both filename and full path
+- **Navigate from Search** - Double-click results to jump to folder (Desktop) / Tap to navigate (Mobile)
+- **Index Status** - Real-time indexing progress with file/directory counts
+- **Smart Indexing** - Skips problematic directories (`/dev`, `/proc`, `/sys`)
+
+### 📱 Mobile App v1.2
+- **🔍 Search Tab** - Full Smart Search functionality on Android
+- **Navigate to Location** - Tap search results to navigate to folder
+- **Copy Path** - Copy file paths to clipboard from search results
+- **Connection Manager** - Singleton pattern for reliable IP/port management
+- **Improved Navigation** - Fixed MainPage reference for seamless navigation
+
+### 🖥️ Desktop Client Updates
+- **Search Tab** - New dedicated tab for Smart Search
+- **💻 Shell Terminal** - Execute commands directly on PS5
+  - Run system commands remotely
+  - Real-time output display
+  - Command history
+  - Working directory support
+- **Equal Panel Layout** - Local Files, PS5 Files, and Right panel now equal width
+- **Improved UI** - Index Status and buttons positioned above search box
+- **Debounced Search** - Smooth typing experience with 300ms debounce
+
+### 🔧 Payload Updates
+- **Indexing Commands** - `CMD_INDEX_START` (0x40), `CMD_INDEX_STATUS` (0x41), `CMD_SEARCH_INDEX` (0x42)
+- **In-Memory Index** - Linked list structure for fast search
+- **Wildcard Matching** - Support for `*` and `?` wildcards
+- **Thread-Safe** - Mutex-protected index operations
+- **Root Path Support** - Can index from `/` (entire filesystem)
+
+### 🐛 Bug Fixes
+- Fixed indexing hangs when scanning root directory
+- Fixed search protocol compatibility between mobile and desktop
+- Fixed navigation stack issues in mobile app
+- Fixed nullable reference warnings in mobile code
+- Added proper error handling for index operations
+
+---
+
+## Version 3.2.1 - Privacy & Bug Fixes (January 24, 2026)
+
+### 🔒 Privacy Improvements
+- **Removed disk space display** - No longer shows PS5 storage capacity (Free/Used/Total)
+- **Fixed storage query bug** - Resolved syntax errors in statvfs code that could cause crashes
+- **Privacy-focused** - Application no longer queries or displays sensitive storage information
+
+### 🐛 Bug Fixes
+- Fixed potential crash from malformed storage query code
+- Removed unused protocol busy flag that caused compiler warnings
+- Cleaned up all storage-related UI elements and backend code
+
+---
+
 ## Version 3.2.0 - Mobile Improvements & Bug Fixes (January 24, 2026)
 
 ### 🎯 Improvements
