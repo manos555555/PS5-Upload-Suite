@@ -1,3 +1,7 @@
+ifif you want to help me continue what I do and make your life easier.
+buy me a coffee☕☕
+https://buymeacoffee.com/manos555554
+
 # 🚀 PS5 Upload Suite - High-Speed File Transfer
 
 **By Manos**
