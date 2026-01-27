@@ -1,0 +1,19 @@
+# Build outputs
+bin/
+obj/
+*.exe
+*.dll
+*.pdb
+*.apk
+*.aab
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider
+.idea/
+
+# Logs
+*.log
