@@ -1,0 +1,2 @@
+c:\Users\HACKMAN\Desktop\ps5 test\my_projects\ps5_upload_suite\test\output\PS5Upload.pdb
+c:\Users\HACKMAN\Desktop\ps5 test\my_projects\ps5_upload_suite\test\output\PS5Upload.exe

@@ -1,0 +1,3 @@
+C:\Users\HACKMAN\Desktop\ps5 test\my_projects\ps5_upload_suite\mobile\bin\Release\net6.0-android\publish\com.ps5tools.uploadsuite-Signed.aab
+C:\Users\HACKMAN\Desktop\ps5 test\my_projects\ps5_upload_suite\mobile\bin\Release\net6.0-android\publish\com.ps5tools.uploadsuite.aab
+C:\Users\HACKMAN\Desktop\ps5 test\my_projects\ps5_upload_suite\mobile\bin\Release\net6.0-android\publish\com.ps5tools.uploadsuite-Signed.apk

@@ -1,0 +1,2 @@
+C:\Users\HACKMAN\Desktop\ps5 test\my_projects\ps5_upload_suite\client\bin\Release\net6.0-windows\win-x64\publish\PS5Upload.pdb
+C:\Users\HACKMAN\Desktop\ps5 test\my_projects\ps5_upload_suite\client\bin\Release\net6.0-windows\win-x64\publish\PS5Upload.exe
