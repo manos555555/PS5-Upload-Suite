@@ -2,16 +2,16 @@
 
 **By Manos**
 
-**Version 3.3.0 - Smart Search & Enhanced Mobile**
+**Version 4.1.0 - Memory Optimization & Large File Handling**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
 
-⭐ **NEW in v3.3.0:** 
-- 🔍 **Smart Search** - Full filesystem indexing with instant search (wildcards, size filters)
-- 💻 **Shell Terminal** - Execute commands directly on PS5 with real-time output
-- 📱 **Mobile Search** - Search feature now available on Android app
-- 🚀 **Navigate from Search** - Double-click search results to jump to folder
-- ⚡ **Lightning Fast** - Search 200,000+ files instantly
+⭐ **NEW in v4.1.0:** 
+- 🧠 **Memory Optimization** - Handles 156K+ files without crashes
+- ⚡ **Reduced UI Stuttering** - Batch logging for smoother experience
+- 🔧 **Lock-Free Operations** - ConcurrentDictionary for thread-safety
+- 🧹 **Auto Memory Cleanup** - Completed files removed from tracking
+- � **Incremental Processing** - No massive dictionary allocations
 
 📱 **Android Mobile Client available!**
 

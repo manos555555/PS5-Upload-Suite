@@ -1,5 +1,95 @@
 # Changelog - PS5 Upload Suite
 
+## Version 4.1.0 - Memory Optimization & Large File Handling (February 5, 2026)
+
+### 🧠 Memory & Performance Improvements
+
+#### 1. Large File Count Support (156K+ Files)
+- **Fixed crash** with games containing 156,253+ files (e.g., Astrobot)
+- **Removed massive dictionary** - No longer creates 156K FileInfo objects at once
+- **Incremental calculation** - Total bytes calculated progressively during scan
+- **Memory efficient** - Handles unlimited file counts without OutOfMemoryException
+
+#### 2. Lock-Free Progress Tracking
+- **ConcurrentDictionary** - Replaced Dictionary with thread-safe collections
+- **Zero lock contention** - Eliminated `lock (_progressLock)` blocks
+- **Atomic operations** - Uses `Interlocked.Add()` for progress updates
+- **Smooth UI** - No stuttering from lock contention
+
+#### 3. Auto Memory Cleanup
+- **Completed files removed** - Dictionaries cleaned after file completion
+- **Reduced memory footprint** - Only active uploads tracked
+- **Prevents memory overflow** - Long-running uploads stay stable
+
+#### 4. Reduced UI Stuttering
+- **Batch logging** - Small files logged every 50 completions (up from 25)
+- **Less UI pressure** - Fewer `Dispatcher.Invoke()` calls
+- **Smoother experience** - Especially noticeable with 100K+ files
+
+### 🔧 Technical Changes
+- Changed `_fileProgressBytes` from Dictionary to ConcurrentDictionary
+- Changed `_fileChunkProgressBytes` from Dictionary to ConcurrentDictionary  
+- Changed `_chunkLogLastBytes` from Dictionary to ConcurrentDictionary
+- Removed `fileSizeLookup` dictionary creation (caused OutOfMemoryException)
+- Increased `SmallFileLogBatchSize` from 25 to 50
+- Added dictionary cleanup in file completion handlers
+
+### 🐛 Bug Fixes
+- Fixed application crash when uploading games with 156K+ files
+- Fixed UI stuttering during small file uploads
+- Fixed memory overflow from massive dictionary allocations
+- Fixed lock contention causing UI freezes
+
+### 📊 Tested With
+- **Astrobot**: 156,253 files, 1,724 directories
+- **Result**: Zero crashes, smooth upload, stable memory usage
+
+---
+
+## Version 4.0.0 - Retry Feature & Stability Improvements (January 27, 2026)
+
+### ✨ New Features
+
+#### 🔄 Retry Failed Transfers
+- **Right-click context menu** on failed transfers
+- **Retry Upload** - Re-queue failed files for upload
+- **Remove from List** - Clear individual failed items
+- **Persistent paths** - Failed transfers store local and remote paths
+- **Smart retry** - Validates file existence before retry
+
+#### 🗑️ Clear All Button Fix
+- **Transfer History Clear All** now works correctly
+- **Confirmation dialog** before clearing history
+- **Clears both** completed and failed transfers
+
+### 🔧 Performance & Stability
+
+#### Connection Stability
+- **Reverted 16MB buffer** - Caused connection drops with 16 parallel connections
+- **Stable 8MB buffer** - Proven reliable for high-speed transfers
+- **TCP NoDelay** - Already enabled for optimal performance
+- **16MB socket buffers** - Maintained for maximum throughput
+
+#### Upload Performance
+- **Large files (>100MB)**: 30-36 MB/s per file
+- **Small files (<100MB)**: 8-12 MB/s per file
+- **4 parallel large files** - Prevents PS5 memory exhaustion
+- **16 total connections** - Optimal for mixed workloads
+
+### 🐛 Bug Fixes
+- Fixed Clear All button not clearing transfer history
+- Fixed connection drops when using oversized buffers
+- Added proper event handlers for failed transfer context menu
+- Improved error handling for retry operations
+
+### 📝 Code Quality
+- Added comprehensive inline documentation
+- Improved code organization and readability
+- Better error messages for failed operations
+- Enhanced UI feedback for user actions
+
+---
+
 ## Version 3.3.0 - Smart Search & Enhanced Mobile (January 26, 2026)
 
 ### 🔍 Smart Search Feature

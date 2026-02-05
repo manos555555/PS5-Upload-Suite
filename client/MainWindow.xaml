@@ -1,0 +1,1163 @@
+<Window x:Class="PS5Upload.MainWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="PS5 Upload - High-Speed File Transfer" Height="900" Width="1600"
+        WindowStartupLocation="CenterScreen"
+        WindowState="Maximized"
+        Background="#1E1E1E"
+        Icon="ps5_logo.png">
+    
+    <Window.Resources>
+        <!-- Override system colors for ComboBox dropdown -->
+        <SolidColorBrush x:Key="{x:Static SystemColors.WindowBrushKey}" Color="#2D2D30"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.WindowColorKey}" Color="#2D2D30"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.ControlBrushKey}" Color="#2D2D30"/>
+        <SolidColorBrush x:Key="{x:Static SystemColors.ControlColorKey}" Color="#2D2D30"/>
+        
+        <Style TargetType="Button">
+            <Setter Property="Background" Value="#007ACC"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="15,8"/>
+            <Setter Property="FontSize" Value="14"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="Button">
+                        <Border Background="{TemplateBinding Background}" 
+                                CornerRadius="4" 
+                                Padding="{TemplateBinding Padding}">
+                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                        </Border>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+            <Style.Triggers>
+                <Trigger Property="IsMouseOver" Value="True">
+                    <Setter Property="Background" Value="#1C97EA"/>
+                </Trigger>
+                <Trigger Property="IsEnabled" Value="False">
+                    <Setter Property="Background" Value="#3E3E42"/>
+                    <Setter Property="Foreground" Value="#666666"/>
+                </Trigger>
+            </Style.Triggers>
+        </Style>
+
+        <Style TargetType="TextBox">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3E3E42"/>
+            <Setter Property="BorderThickness" Value="1"/>
+            <Setter Property="Padding" Value="8"/>
+            <Setter Property="FontSize" Value="14"/>
+        </Style>
+
+        <Style TargetType="ListBox">
+            <Setter Property="Background" Value="#2D2D30"/>
+            <Setter Property="Foreground" Value="White"/>
+            <Setter Property="BorderBrush" Value="#3E3E42"/>
+            <Setter Property="BorderThickness" Value="1"/>
+        </Style>
+
+        <Style TargetType="TextBlock">
+            <Setter Property="Foreground" Value="White"/>
+        </Style>
+    </Window.Resources>
+
+    <Grid Margin="20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid Grid.Row="0" Margin="0,0,0,20">
+            <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
+                <Image Source="ps5_logo.png" 
+                       Width="80" 
+                       Height="80" 
+                       Margin="0,0,15,0"
+                       VerticalAlignment="Center"/>
+                <StackPanel VerticalAlignment="Center">
+                    <TextBlock Text="PS5 Upload - High-Speed File Transfer" 
+                               FontSize="24" 
+                               FontWeight="Bold"
+                               Foreground="#007ACC"/>
+                    <TextBlock Text="By Manos" 
+                               FontSize="12" 
+                               Foreground="#999999"
+                               Margin="0,5,0,0"/>
+                </StackPanel>
+            </StackPanel>
+            
+            <!-- Buy Me a Coffee Button - Top Right -->
+            <Button x:Name="BuyMeCoffeeButton"
+                    HorizontalAlignment="Right"
+                    VerticalAlignment="Center"
+                    Background="#FFDD00"
+                    Foreground="#000000"
+                    Padding="12,6"
+                    FontSize="13"
+                    FontWeight="SemiBold"
+                    Click="BuyMeCoffeeButton_Click"
+                    ToolTip="Support the developer ☕">
+                <StackPanel Orientation="Horizontal">
+                    <TextBlock Text="☕" FontSize="16" Margin="0,0,5,0" VerticalAlignment="Center"/>
+                    <TextBlock Text="Buy me a coffee" VerticalAlignment="Center"/>
+                </StackPanel>
+            </Button>
+        </Grid>
+
+        <!-- Connection Panel -->
+        <Border Grid.Row="1" 
+                Background="#252526" 
+                BorderBrush="#3E3E42" 
+                BorderThickness="1" 
+                CornerRadius="4" 
+                Padding="15"
+                Margin="0,0,0,15">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                
+                <!-- PS5 Profile Selection -->
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                    <TextBlock Text="PS5 Profile:" 
+                               VerticalAlignment="Center"
+                               Margin="0,0,10,0"/>
+                    <ComboBox x:Name="PS5ProfileComboBox"
+                              Width="200"
+                              VerticalAlignment="Center"
+                              SelectionChanged="PS5ProfileComboBox_SelectionChanged"
+                              Background="#2D2D30"
+                              Foreground="White"
+                              BorderBrush="#3E3E42">
+                        <ComboBox.Template>
+                            <ControlTemplate TargetType="ComboBox">
+                                <Grid>
+                                    <ToggleButton Name="ToggleButton"
+                                                  Grid.Column="2"
+                                                  Focusable="false"
+                                                  IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                                  ClickMode="Press"
+                                                  Background="#2D2D30"
+                                                  BorderBrush="#3E3E42"
+                                                  BorderThickness="1"/>
+                                    <ContentPresenter Name="ContentSite"
+                                                      IsHitTestVisible="False"
+                                                      Content="{TemplateBinding SelectionBoxItem}"
+                                                      ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                      ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                      Margin="5,3,23,3"
+                                                      VerticalAlignment="Center"
+                                                      HorizontalAlignment="Left"/>
+                                    <Popup Name="Popup"
+                                           Placement="Bottom"
+                                           IsOpen="{TemplateBinding IsDropDownOpen}"
+                                           AllowsTransparency="True"
+                                           Focusable="False"
+                                           PopupAnimation="Slide">
+                                        <Grid Name="DropDown"
+                                              SnapsToDevicePixels="True"
+                                              MinWidth="{TemplateBinding ActualWidth}"
+                                              MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                            <Border Name="DropDownBorder"
+                                                    Background="#2D2D30"
+                                                    BorderThickness="1"
+                                                    BorderBrush="#3E3E42"/>
+                                            <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                                <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                            </ScrollViewer>
+                                        </Grid>
+                                    </Popup>
+                                </Grid>
+                            </ControlTemplate>
+                        </ComboBox.Template>
+                        <ComboBox.ItemContainerStyle>
+                            <Style TargetType="ComboBoxItem">
+                                <Setter Property="Background" Value="#2D2D30"/>
+                                <Setter Property="Foreground" Value="White"/>
+                                <Setter Property="Padding" Value="5"/>
+                                <Setter Property="Template">
+                                    <Setter.Value>
+                                        <ControlTemplate TargetType="ComboBoxItem">
+                                            <Border Name="Border" 
+                                                    Background="#2D2D30"
+                                                    Padding="5">
+                                                <ContentPresenter/>
+                                            </Border>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsHighlighted" Value="True">
+                                                    <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                </Trigger>
+                                                <Trigger Property="IsSelected" Value="True">
+                                                    <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                </Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </Setter.Value>
+                                </Setter>
+                            </Style>
+                        </ComboBox.ItemContainerStyle>
+                    </ComboBox>
+                    <Button Content="💾 Save Profile" 
+                            Click="SaveProfileButton_Click"
+                            Width="140"
+                            Margin="10,0,0,0"
+                            Background="#28A745"/>
+                    <Button Content="🗑️ Delete Profile" 
+                            Click="DeleteProfileButton_Click"
+                            Width="150"
+                            Margin="5,0,0,0"
+                            Background="#DC3545"/>
+                </StackPanel>
+                
+                <!-- IP Address and Connect -->
+                <Grid Grid.Row="1">
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+                    
+                    <Grid Grid.Row="0">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="Auto"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <TextBlock Grid.Column="0" 
+                                   Text="PS5 IP Address:" 
+                                   VerticalAlignment="Center"
+                                   Margin="0,0,10,0"/>
+                        
+                        <TextBox Grid.Column="1" 
+                                 x:Name="IpAddressTextBox"
+                                 Text="192.168.0.160"
+                                 VerticalAlignment="Center"
+                                 Margin="0,0,10,0"/>
+                        
+                        <Button Grid.Column="2" 
+                                x:Name="ConnectButton"
+                                Content="Connect"
+                                Click="ConnectButton_Click"
+                                Width="100"/>
+                    </Grid>
+                    
+                    <!-- Auto-send Payload Settings -->
+                    <Expander Grid.Row="1" 
+                              Header="⚙️ Auto-send Payload Settings" 
+                              IsExpanded="False"
+                              Background="#2D2D30"
+                              Foreground="White"
+                              Margin="0,10,0,0">
+                        <StackPanel Margin="10">
+                            <CheckBox x:Name="AutoSendPayloadCheckBox"
+                                      Content="Auto-send payload on startup"
+                                      Foreground="White"
+                                      Margin="0,0,0,10"
+                                      Checked="AutoSendPayloadCheckBox_Changed"
+                                      Unchecked="AutoSendPayloadCheckBox_Changed"/>
+                            
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" 
+                                           Text="Payload File:" 
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,10,0"/>
+                                
+                                <TextBox Grid.Column="1" 
+                                         x:Name="PayloadPathTextBox"
+                                         Text=""
+                                         VerticalAlignment="Center"
+                                         Margin="0,0,10,0"
+                                         IsReadOnly="True"
+                                         AllowDrop="True"
+                                         PreviewDragOver="PayloadPathTextBox_DragOver"
+                                         Drop="PayloadPathTextBox_Drop"/>
+                                
+                                <Button Grid.Column="2" 
+                                        Content="📂 Browse"
+                                        Click="BrowsePayloadButton_Click"
+                                        Width="100"/>
+                            </Grid>
+                            
+                            <Grid Margin="0,0,0,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="100"/>
+                                </Grid.ColumnDefinitions>
+                                
+                                <TextBlock Grid.Column="0" 
+                                           Text="Payload Port:" 
+                                           VerticalAlignment="Center"
+                                           Margin="0,0,10,0"/>
+                                
+                                <TextBox Grid.Column="1" 
+                                         x:Name="PayloadPortTextBox"
+                                         Text="9021"
+                                         VerticalAlignment="Center"
+                                         TextChanged="PayloadPortTextBox_Changed"/>
+                            </Grid>
+                            
+                            <!-- Manual Send Payload Button -->
+                            <Button x:Name="SendPayloadButton"
+                                    Content="📤 Send Payload Now"
+                                    Click="SendPayloadButton_Click"
+                                    Background="#007ACC"
+                                    Foreground="White"
+                                    Padding="10,5"
+                                    HorizontalAlignment="Stretch"/>
+                        </StackPanel>
+                    </Expander>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- Storage Info Panel -->
+        <Border Grid.Row="2" 
+                Background="#252526" 
+                BorderBrush="#3E3E42" 
+                BorderThickness="1" 
+                CornerRadius="4" 
+                Padding="15"
+                Margin="0,0,0,15"
+                x:Name="StorageInfoPanel"
+                Visibility="Collapsed">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                
+                <StackPanel Grid.Row="0" Orientation="Horizontal" Margin="0,0,0,10">
+                    <TextBlock Text=" PS5 Storage Info" 
+                               FontSize="16" 
+                               FontWeight="Bold"
+                               Foreground="#007ACC"
+                               VerticalAlignment="Center"/>
+                    <Button Content=" Refresh" 
+                            Click="RefreshStorageButton_Click"
+                            Width="100"
+                            Margin="15,0,0,0"
+                            Background="#28A745"/>
+                </StackPanel>
+                
+                <Grid Grid.Row="1">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    
+                    <!-- Column 1: Capacity Info -->
+                    <StackPanel Grid.Column="0" Margin="0,0,20,0">
+                        <TextBlock Text="━━━━━━━━━━━━━━━━━━━━━━━━━━━━" 
+                                   Foreground="#3E3E42"
+                                   Margin="0,0,0,5"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Total Capacity:" Width="150" Foreground="#999999"/>
+                            <TextBlock x:Name="TotalCapacityText" Text="---" FontWeight="Bold"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Real Free Space:" Width="150" Foreground="#999999"/>
+                            <TextBlock x:Name="RealFreeSpaceText" Text="---" FontWeight="Bold" Foreground="#28A745"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="System Reserved:" Width="150" Foreground="#999999"/>
+                            <TextBlock x:Name="ReservedSpaceText" Text="---" FontWeight="Bold" Foreground="#FFC107"/>
+                        </StackPanel>
+                    </StackPanel>
+                    
+                    <!-- Column 2: Usage Info -->
+                    <StackPanel Grid.Column="1" Margin="0,0,20,0">
+                        <TextBlock Text="━━━━━━━━━━━━━━━━━━━━━━━━━━━━" 
+                                   Foreground="#3E3E42"
+                                   Margin="0,0,0,5"/>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Mounted Games:" Width="150" Foreground="#999999"/>
+                            <TextBlock x:Name="MountedGamesText" Text="---" FontWeight="Bold" Foreground="#007ACC"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="User Data:" Width="150" Foreground="#999999"/>
+                            <TextBlock x:Name="UserDataText" Text="---" FontWeight="Bold" Foreground="#007ACC"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Total Used:" Width="150" Foreground="#999999"/>
+                            <TextBlock x:Name="TotalUsedText" Text="---" FontWeight="Bold" Foreground="#DC3545"/>
+                        </StackPanel>
+                    </StackPanel>
+                    
+                    <!-- Column 3: Progress Bar -->
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="━━━━━━━━━━━━━━━━━━━━━━━━━━━━" 
+                                   Foreground="#3E3E42"
+                                   Margin="0,0,0,5"/>
+                        <TextBlock Text="Disk Usage" Foreground="#999999" Margin="0,0,0,5"/>
+                        <ProgressBar x:Name="StorageProgressBar" 
+                                     Height="30" 
+                                     Minimum="0" 
+                                     Maximum="100" 
+                                     Value="0"
+                                     Background="#2D2D30"
+                                     Foreground="#007ACC"
+                                     BorderBrush="#3E3E42"
+                                     BorderThickness="1"/>
+                        <TextBlock x:Name="StoragePercentText" 
+                                   Text="0% Used" 
+                                   HorizontalAlignment="Center"
+                                   Margin="0,5,0,0"
+                                   FontWeight="Bold"/>
+                    </StackPanel>
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- Main Content -->
+        <Grid Grid.Row="3">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="15"/>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="15"/>
+                <ColumnDefinition Width="*"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Local Files -->
+            <Border Grid.Column="0" 
+                    Background="#252526" 
+                    BorderBrush="#3E3E42" 
+                    BorderThickness="1" 
+                    CornerRadius="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" 
+                            Background="#2D2D30" 
+                            Padding="10"
+                            BorderBrush="#3E3E42"
+                            BorderThickness="0,0,0,1">
+                        <TextBlock Text="📁 Local Files" 
+                                   FontSize="16" 
+                                   FontWeight="SemiBold"/>
+                    </Border>
+
+                    <ListBox Grid.Row="1" 
+                             x:Name="LocalFilesListBox"
+                             BorderThickness="0"
+                             AllowDrop="True"
+                             Drop="LocalFilesListBox_Drop"
+                             DragEnter="LocalFilesListBox_DragEnter"
+                             MouseRightButtonUp="LocalFilesListBox_RightClick">
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="5">
+                                    <TextBlock Text="{Binding Icon}" 
+                                               FontSize="16" 
+                                               Margin="0,0,10,0"/>
+                                    <TextBlock Text="{Binding Name}" 
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="🗑️ Remove" Click="RemoveLocalFile_Click"/>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                    </ListBox>
+
+                    <StackPanel Grid.Row="2" 
+                                Orientation="Horizontal" 
+                                Margin="10"
+                                HorizontalAlignment="Center">
+                        <Button Content="Browse Files" 
+                                Click="BrowseFilesButton_Click"
+                                Margin="0,0,5,0"/>
+                        <Button Content="Browse Folder" 
+                                Click="BrowseFolderButton_Click"
+                                Margin="0,0,5,0"/>
+                        <Button Content="Clear All" 
+                                Click="ClearLocalFiles_Click"
+                                Background="#DC3545"/>
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <!-- PS5 Files -->
+            <Border Grid.Column="2" 
+                    Background="#252526" 
+                    BorderBrush="#3E3E42" 
+                    BorderThickness="1" 
+                    CornerRadius="4">
+                <Grid>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="*"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <Border Grid.Row="0" 
+                            Background="#2D2D30" 
+                            Padding="10"
+                            BorderBrush="#3E3E42"
+                            BorderThickness="0,0,0,1">
+                        <TextBlock Text="🎮 PS5 Files" 
+                                   FontSize="16" 
+                                   FontWeight="SemiBold"/>
+                    </Border>
+
+                    <StackPanel Grid.Row="1" 
+                                Margin="10"
+                                Background="#2D2D30">
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="Current Path:" 
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0"/>
+                            <TextBox x:Name="CurrentPathTextBox"
+                                     Text="/data"
+                                     Width="200"
+                                     VerticalAlignment="Center"
+                                     Margin="0,0,10,0"/>
+                            <Button Content="Go" 
+                                    Click="GoButton_Click"
+                                    Width="60"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                            <TextBlock Text="⭐ Favorites:" 
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0"/>
+                            <ComboBox x:Name="FavoritesComboBox"
+                                      Width="200"
+                                      VerticalAlignment="Center"
+                                      SelectionChanged="FavoritesComboBox_SelectionChanged"
+                                      Background="#2D2D30"
+                                      Foreground="White"
+                                      BorderBrush="#3E3E42">
+                                <ComboBox.Template>
+                                    <ControlTemplate TargetType="ComboBox">
+                                        <Grid>
+                                            <ToggleButton Name="ToggleButton"
+                                                          Grid.Column="2"
+                                                          Focusable="false"
+                                                          IsChecked="{Binding Path=IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
+                                                          ClickMode="Press"
+                                                          Background="#2D2D30"
+                                                          BorderBrush="#3E3E42"
+                                                          BorderThickness="1"/>
+                                            <ContentPresenter Name="ContentSite"
+                                                              IsHitTestVisible="False"
+                                                              Content="{TemplateBinding SelectionBoxItem}"
+                                                              ContentTemplate="{TemplateBinding SelectionBoxItemTemplate}"
+                                                              ContentTemplateSelector="{TemplateBinding ItemTemplateSelector}"
+                                                              Margin="5,3,23,3"
+                                                              VerticalAlignment="Center"
+                                                              HorizontalAlignment="Left"/>
+                                            <Popup Name="Popup"
+                                                   Placement="Bottom"
+                                                   IsOpen="{TemplateBinding IsDropDownOpen}"
+                                                   AllowsTransparency="True"
+                                                   Focusable="False"
+                                                   PopupAnimation="Slide">
+                                                <Grid Name="DropDown"
+                                                      SnapsToDevicePixels="True"
+                                                      MinWidth="{TemplateBinding ActualWidth}"
+                                                      MaxHeight="{TemplateBinding MaxDropDownHeight}">
+                                                    <Border Name="DropDownBorder"
+                                                            Background="#2D2D30"
+                                                            BorderThickness="1"
+                                                            BorderBrush="#3E3E42"/>
+                                                    <ScrollViewer Margin="4,6,4,6" SnapsToDevicePixels="True">
+                                                        <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
+                                                    </ScrollViewer>
+                                                </Grid>
+                                            </Popup>
+                                        </Grid>
+                                    </ControlTemplate>
+                                </ComboBox.Template>
+                                <ComboBox.ItemContainerStyle>
+                                    <Style TargetType="ComboBoxItem">
+                                        <Setter Property="Background" Value="#2D2D30"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                        <Setter Property="Padding" Value="5"/>
+                                        <Setter Property="Template">
+                                            <Setter.Value>
+                                                <ControlTemplate TargetType="ComboBoxItem">
+                                                    <Border Name="Border" 
+                                                            Background="#2D2D30"
+                                                            Padding="5">
+                                                        <ContentPresenter/>
+                                                    </Border>
+                                                    <ControlTemplate.Triggers>
+                                                        <Trigger Property="IsHighlighted" Value="True">
+                                                            <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                        </Trigger>
+                                                        <Trigger Property="IsSelected" Value="True">
+                                                            <Setter TargetName="Border" Property="Background" Value="#007ACC"/>
+                                                        </Trigger>
+                                                    </ControlTemplate.Triggers>
+                                                </ControlTemplate>
+                                            </Setter.Value>
+                                        </Setter>
+                                    </Style>
+                                </ComboBox.ItemContainerStyle>
+                            </ComboBox>
+                            <Button Content="⭐ Add" 
+                                    Click="AddFavoriteButton_Click"
+                                    Width="90"
+                                    Margin="10,0,0,0"
+                                    Background="#28A745"/>
+                            <Button Content="🗑️ Remove" 
+                                    Click="RemoveFavoriteButton_Click"
+                                    Width="110"
+                                    Margin="5,0,0,0"
+                                    Background="#DC3545"/>
+                        </StackPanel>
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="🔍 Search:" 
+                                       VerticalAlignment="Center"
+                                       Margin="0,0,10,0"/>
+                            <TextBox x:Name="SearchTextBox"
+                                     Width="250"
+                                     VerticalAlignment="Center"
+                                     TextChanged="SearchTextBox_TextChanged"
+                                     Background="#1E1E1E"
+                                     Foreground="White"
+                                     BorderBrush="#3E3E42"/>
+                            <Button Content="✖ Clear" 
+                                    Click="ClearSearchButton_Click"
+                                    Width="100"
+                                    Margin="5,0,0,0"
+                                    Background="#3E3E42"/>
+                        </StackPanel>
+                    </StackPanel>
+
+                    <ListBox Grid.Row="2" 
+                             x:Name="PS5FilesListBox"
+                             BorderThickness="0"
+                             SelectionMode="Extended"
+                             MouseDoubleClick="PS5FilesListBox_MouseDoubleClick">
+                        <ListBox.ContextMenu>
+                            <ContextMenu>
+                                <MenuItem Header="⬇️ Download to PC" Click="DownloadMenuItem_Click"/>
+                                <Separator/>
+                                <MenuItem Header="📝 Rename" Click="RenameMenuItem_Click"/>
+                                <MenuItem Header="📋 Copy" Click="CopyMenuItem_Click"/>
+                                <MenuItem Header="✂️ Move" Click="MoveMenuItem_Click"/>
+                                <Separator/>
+                                <MenuItem Header="🗑️ Delete" Click="DeleteMenuItem_Click"/>
+                                <MenuItem Header="🗑️ Delete Selected" Click="DeleteSelectedMenuItem_Click"/>
+                            </ContextMenu>
+                        </ListBox.ContextMenu>
+                        <ListBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Margin="5">
+                                    <TextBlock Text="{Binding Icon}" 
+                                               FontSize="16" 
+                                               Margin="0,0,10,0"/>
+                                    <StackPanel>
+                                        <TextBlock Text="{Binding Name}" 
+                                                   FontWeight="SemiBold"/>
+                                        <TextBlock Text="{Binding SizeText}" 
+                                                   FontSize="11" 
+                                                   Foreground="#999999"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ListBox.ItemTemplate>
+                    </ListBox>
+
+                </Grid>
+            </Border>
+
+            <!-- Tabs Panel (Debug Log, Transfer History, Shell, Search) -->
+            <Border Grid.Column="4" 
+                    Background="#252526" 
+                    BorderBrush="#3E3E42" 
+                    BorderThickness="1" 
+                    CornerRadius="4">
+                <TabControl Background="#252526" BorderThickness="0" TabStripPlacement="Top">
+                    <TabControl.Resources>
+                        <Style TargetType="TabItem">
+                            <Setter Property="Background" Value="#2D2D30"/>
+                            <Setter Property="Foreground" Value="White"/>
+                            <Setter Property="BorderThickness" Value="0"/>
+                            <Setter Property="Padding" Value="15,8"/>
+                            <Setter Property="FontSize" Value="13"/>
+                            <Setter Property="Template">
+                                <Setter.Value>
+                                    <ControlTemplate TargetType="TabItem">
+                                        <Border Background="{TemplateBinding Background}" 
+                                                BorderThickness="0,0,0,2"
+                                                BorderBrush="Transparent"
+                                                Padding="{TemplateBinding Padding}">
+                                            <ContentPresenter ContentSource="Header"/>
+                                        </Border>
+                                        <ControlTemplate.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="#1E1E1E"/>
+                                                <Setter Property="BorderBrush" Value="#007ACC"/>
+                                            </Trigger>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="#3E3E42"/>
+                                            </Trigger>
+                                        </ControlTemplate.Triggers>
+                                    </ControlTemplate>
+                                </Setter.Value>
+                            </Setter>
+                        </Style>
+                    </TabControl.Resources>
+
+                    <!-- Debug Log Tab -->
+                    <TabItem Header="📋 Debug Log">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <TextBox Grid.Row="0" 
+                                     x:Name="LogTextBox"
+                                     Text=""
+                                     FontFamily="Consolas"
+                                     FontSize="11"
+                                     Foreground="#CCCCCC"
+                                     Background="#1E1E1E"
+                                     BorderThickness="0"
+                                     Padding="10"
+                                     TextWrapping="Wrap"
+                                     IsReadOnly="True"
+                                     IsReadOnlyCaretVisible="False"
+                                     Focusable="False"
+                                     Cursor="Arrow"
+                                     VerticalScrollBarVisibility="Auto"
+                                     HorizontalScrollBarVisibility="Auto"/>
+
+                            <StackPanel Grid.Row="1" 
+                                        Orientation="Horizontal" 
+                                        Margin="10"
+                                        HorizontalAlignment="Center">
+                                <Button Content="📋 Copy Log"
+                                        Click="CopyLogButton_Click"
+                                        Margin="0,0,10,0"
+                                        Background="#28A745"/>
+                                <Button Content="🗑️ Clear Log"
+                                        Click="ClearLogButton_Click"
+                                        Background="#3E3E42"/>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- Transfer History Tab -->
+                    <TabItem Header="📊 Transfer History">
+                        <Grid Background="#1E1E1E">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Completed Transfers Section -->
+                            <Expander Grid.Row="0" 
+                                      Header="✅ Completed Transfers" 
+                                      IsExpanded="True"
+                                      Background="#2D2D30"
+                                      Foreground="White"
+                                      Margin="10,10,10,5">
+                                <ListBox x:Name="CompletedTransfersListBox"
+                                         Background="#1E1E1E"
+                                         Foreground="White"
+                                         BorderThickness="0"
+                                         MaxHeight="200"
+                                         Margin="5"/>
+                            </Expander>
+
+                            <!-- Failed Transfers Section -->
+                            <Expander Grid.Row="1" 
+                                      Header="❌ Failed Transfers" 
+                                      IsExpanded="True"
+                                      Background="#2D2D30"
+                                      Foreground="White"
+                                      Margin="10,5,10,10">
+                                <ListBox x:Name="FailedTransfersListBox"
+                                         Background="#1E1E1E"
+                                         Foreground="White"
+                                         BorderThickness="0"
+                                         MaxHeight="200"
+                                         Margin="5">
+                                    <ListBox.ContextMenu>
+                                        <ContextMenu>
+                                            <MenuItem Header="🔄 Retry Upload" Click="RetryFailedUpload_Click"/>
+                                            <MenuItem Header="🗑️ Remove from List" Click="RemoveFailedTransfer_Click"/>
+                                        </ContextMenu>
+                                    </ListBox.ContextMenu>
+                                </ListBox>
+                            </Expander>
+
+                            <!-- Buttons -->
+                            <StackPanel Grid.Row="2" 
+                                        Orientation="Horizontal" 
+                                        Margin="10"
+                                        HorizontalAlignment="Center">
+                                <Button Content="📤 Export"
+                                        Margin="0,0,10,0"
+                                        Background="#28A745"/>
+                                <Button Content="🗑️ Clear All"
+                                        Click="ClearTransferHistory_Click"
+                                        Background="#DC3545"/>
+                                <CheckBox Content="Auto Clear on Startup"
+                                          Foreground="White"
+                                          Margin="20,0,0,0"
+                                          VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- Shell Tab -->
+                    <TabItem Header="💻 Shell">
+                        <Grid Background="#1E1E1E">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Shell Header -->
+                            <TextBlock Grid.Row="0" 
+                                       Text="PS5 Shell Terminal - Ready&#x0a;Type 'help' for available commands"
+                                       FontFamily="Consolas"
+                                       FontSize="11"
+                                       Foreground="#28A745"
+                                       Background="#0D0D0D"
+                                       Padding="10"
+                                       Margin="0"/>
+
+                            <!-- Shell Output -->
+                            <ListBox Grid.Row="1" 
+                                     x:Name="ShellOutputListBox"
+                                     ItemsSource="{Binding}"
+                                     FontFamily="Consolas"
+                                     FontSize="11"
+                                     Foreground="#CCCCCC"
+                                     Background="#0D0D0D"
+                                     BorderThickness="0"
+                                     Padding="10"
+                                     ScrollViewer.VerticalScrollBarVisibility="Auto"
+                                     ScrollViewer.HorizontalScrollBarVisibility="Auto"/>
+
+                            <!-- Command Input -->
+                            <TextBox Grid.Row="2" 
+                                     x:Name="ShellCommandInput"
+                                     FontFamily="Consolas"
+                                     FontSize="11"
+                                     Foreground="White"
+                                     Background="#2D2D30"
+                                     BorderBrush="#3E3E42"
+                                     BorderThickness="0,1,0,0"
+                                     Padding="10"
+                                     KeyDown="ShellCommandInput_KeyDown"/>
+
+                            <!-- Shell Buttons -->
+                            <StackPanel Grid.Row="3" 
+                                        Orientation="Horizontal" 
+                                        Margin="10"
+                                        HorizontalAlignment="Center">
+                                <Button Content="🗑️ Clear"
+                                        Click="ClearShellButton_Click"
+                                        Margin="0,0,10,0"
+                                        Background="#007ACC"/>
+                                <Button Content="💾 Save Log"
+                                        Click="SaveShellLogButton_Click"
+                                        Background="#28A745"/>
+                            </StackPanel>
+                        </Grid>
+                    </TabItem>
+
+                    <!-- Search Tab -->
+                    <TabItem Header="🔍 Search">
+                        <Grid Background="#1E1E1E">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Index Status -->
+                            <Border Grid.Row="0" 
+                                    Background="#2D2D30"
+                                    Padding="10"
+                                    Margin="10,10,10,5">
+                                <StackPanel>
+                                    <TextBlock x:Name="IndexStatusText"
+                                               Text="Index Status: Not started"
+                                               Foreground="White"
+                                               Margin="0,0,0,10"/>
+                                    <StackPanel Orientation="Horizontal">
+                                        <Button x:Name="StartIndexButton"
+                                                Content="🔄 Start Index"
+                                                Click="StartIndexButton_Click"
+                                                Margin="0,0,10,0"
+                                                Background="#007ACC"/>
+                                        <Button x:Name="RefreshIndexButton"
+                                                Content="🔃 Refresh"
+                                                Click="RefreshIndexButton_Click"
+                                                Background="#3E3E42"/>
+                                    </StackPanel>
+                                </StackPanel>
+                            </Border>
+
+                            <!-- Search Input -->
+                            <Grid Grid.Row="1" Margin="10,5,10,10">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*"/>
+                                    <ColumnDefinition Width="Auto"/>
+                                </Grid.ColumnDefinitions>
+                                <TextBox Grid.Column="0" 
+                                         x:Name="SearchInputBox"
+                                         Background="#2D2D30"
+                                         Foreground="White"
+                                         BorderBrush="#3E3E42"
+                                         Padding="10"
+                                         KeyDown="SearchInputBox_KeyDown"/>
+                                <Button Grid.Column="1" 
+                                        Content="🗑️ Clear"
+                                        Click="ClearIndexSearchButton_Click"
+                                        Margin="10,0,0,0"
+                                        Background="#3E3E42"/>
+                            </Grid>
+
+                            <!-- Search Results -->
+                            <DataGrid Grid.Row="2" 
+                                      x:Name="SearchResultsGrid"
+                                      Background="#1E1E1E"
+                                      Foreground="White"
+                                      BorderBrush="#3E3E42"
+                                      BorderThickness="1"
+                                      Margin="10,0,10,10"
+                                      AutoGenerateColumns="False"
+                                      HeadersVisibility="Column"
+                                      GridLinesVisibility="None"
+                                      IsReadOnly="True"
+                                      MouseDoubleClick="SearchResultsGrid_MouseDoubleClick">
+                                <DataGrid.ColumnHeaderStyle>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="Background" Value="#2D2D30"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                        <Setter Property="FontWeight" Value="Bold"/>
+                                        <Setter Property="Padding" Value="10,5"/>
+                                        <Setter Property="BorderBrush" Value="#3E3E42"/>
+                                        <Setter Property="BorderThickness" Value="0,0,1,1"/>
+                                    </Style>
+                                </DataGrid.ColumnHeaderStyle>
+                                <DataGrid.RowStyle>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="Background" Value="#1E1E1E"/>
+                                        <Setter Property="Foreground" Value="White"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True">
+                                                <Setter Property="Background" Value="#2D2D30"/>
+                                            </Trigger>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="#007ACC"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.RowStyle>
+                                <DataGrid.CellStyle>
+                                    <Style TargetType="DataGridCell">
+                                        <Setter Property="BorderThickness" Value="0"/>
+                                        <Setter Property="Padding" Value="5"/>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsSelected" Value="True">
+                                                <Setter Property="Background" Value="#007ACC"/>
+                                                <Setter Property="Foreground" Value="White"/>
+                                            </Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                </DataGrid.CellStyle>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Name" Width="*" Binding="{Binding Name}"/>
+                                    <DataGridTextColumn Header="Path" Width="2*" Binding="{Binding Path}"/>
+                                    <DataGridTextColumn Header="Size" Width="100" Binding="{Binding SizeText}"/>
+                                    <DataGridTextColumn Header="Modified" Width="150" Binding="{Binding Modified, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+
+                            <!-- Search Examples -->
+                            <Border Grid.Row="3" 
+                                    Background="#2D2D30"
+                                    Padding="10"
+                                    Margin="10,0,10,10">
+                                <StackPanel>
+                                    <TextBlock Text="💡 Search Examples:" 
+                                               Foreground="#999999"
+                                               FontSize="11"
+                                               Margin="0,0,0,5"/>
+                                    <TextBlock Text="• *.pkg - Find all PKG files" 
+                                               Foreground="#999999"
+                                               FontSize="10"/>
+                                    <TextBlock Text="• loader - Find files containing 'loader'" 
+                                               Foreground="#999999"
+                                               FontSize="10"/>
+                                    <TextBlock Text="• *.elf size:&gt;10MB - ELF files larger than 10MB" 
+                                               Foreground="#999999"
+                                               FontSize="10"/>
+                                    <TextBlock Text="• game* size:&lt;1GB - Files starting with 'game', smaller than 1GB" 
+                                               Foreground="#999999"
+                                               FontSize="10"/>
+                                </StackPanel>
+                            </Border>
+                        </Grid>
+                    </TabItem>
+                </TabControl>
+            </Border>
+        </Grid>
+
+        <!-- Upload Progress -->
+        <Border Grid.Row="4" 
+                Background="#252526" 
+                BorderBrush="#3E3E42" 
+                BorderThickness="1" 
+                CornerRadius="4" 
+                Padding="15"
+                Margin="0,15,0,0"
+                x:Name="ProgressPanel"
+                Visibility="Collapsed">
+            <Grid>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+
+                <!-- Files Remaining Counter -->
+                <TextBlock Grid.Row="0" 
+                           x:Name="FilesRemainingText"
+                           Text="Files: 0 / 0 (0 remaining)"
+                           FontSize="13"
+                           FontWeight="SemiBold"
+                           Foreground="#FFC107"
+                           Margin="0,0,0,8"/>
+
+                <!-- Total Folder Progress -->
+                <TextBlock Grid.Row="1" 
+                           x:Name="TotalProgressText"
+                           Text="Total: 0 / 0 files"
+                           FontSize="14"
+                           FontWeight="SemiBold"
+                           Foreground="#28A745"
+                           Margin="0,0,0,5"/>
+
+                <ProgressBar Grid.Row="2" 
+                             x:Name="TotalProgressBar"
+                             Height="20"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Foreground="#17A2B8"
+                             Background="#2D2D30"
+                             BorderBrush="#3E3E42"
+                             Margin="0,0,0,10"/>
+
+                <!-- Current File -->
+                <TextBlock Grid.Row="3" 
+                           x:Name="UploadFileNameText"
+                           Text="Uploading: filename.bin"
+                           FontSize="13"
+                           Margin="0,0,0,5"/>
+
+                <ProgressBar Grid.Row="4" 
+                             x:Name="UploadProgressBar"
+                             Height="20"
+                             Minimum="0"
+                             Maximum="100"
+                             Value="0"
+                             Foreground="#28A745"
+                             Background="#2D2D30"
+                             BorderBrush="#3E3E42"/>
+
+                <!-- Speed and Progress -->
+                <Grid Grid.Row="5" Margin="0,8,0,0">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <TextBlock Grid.Column="0" 
+                               x:Name="UploadSpeedText"
+                               Text="Speed: 0 MB/s | Avg: 0 MB/s"
+                               FontSize="12"
+                               Foreground="#999999"/>
+
+                    <TextBlock Grid.Column="1" 
+                               x:Name="UploadProgressText"
+                               Text="0 / 0 MB (0%)"
+                               FontSize="12"
+                               Foreground="#999999"/>
+                </Grid>
+
+                <!-- ETA -->
+                <TextBlock Grid.Row="6" 
+                           x:Name="UploadETAText"
+                           Text="ETA: Calculating..."
+                           FontSize="12"
+                           Foreground="#999999"
+                           Margin="0,5,0,0"/>
+            </Grid>
+        </Border>
+
+        <!-- Upload and Cancel Buttons -->
+        <Grid Grid.Row="5" Margin="0,10,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <!-- Upload Button -->
+            <Button Grid.Column="0"
+                    x:Name="UploadButton"
+                    Content="📤 Upload to PS5"
+                    Click="UploadButton_Click"
+                    Height="45"
+                    FontSize="16"
+                    FontWeight="SemiBold"
+                    Background="#007ACC"
+                    IsEnabled="False"/>
+
+            <!-- Cancel Button -->
+            <Button Grid.Column="2"
+                    x:Name="CancelButton"
+                    Content="❌ Cancel"
+                    Click="CancelButton_Click"
+                    Height="45"
+                    Width="150"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Background="#DC3545"
+                    IsEnabled="False"/>
+        </Grid>
+    </Grid>
+</Window>
