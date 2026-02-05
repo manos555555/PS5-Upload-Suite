@@ -41,7 +41,7 @@
 - Fixed lock contention causing UI freezes
 
 ### 📊 Tested With
-- **Astrobot**: 156,253 files, 1,724 directories
+- **Astrobot**: 156,253 files, 1,724 directories - **53 minutes total**
 - **Result**: Zero crashes, smooth upload, stable memory usage
 
 ---

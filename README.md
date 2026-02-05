@@ -121,6 +121,12 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 - ✅ **Fully responsive UI** throughout upload
 - ✅ **No memory leaks** - stable operation
 
+### v4.1.0 Real-World Test (Astrobot):
+- ✅ **156,253 files** uploaded successfully in **53 minutes**
+- ✅ **1,724 directories** created
+- ✅ **Zero crashes** - stable memory usage throughout
+- ✅ **Smooth UI** - no stuttering with massive file counts
+
 ### Previous Results (v1.3.0):
 - ✅ **42,801 files** uploaded successfully
 - ✅ **60-150 MB/s** sustained throughput
