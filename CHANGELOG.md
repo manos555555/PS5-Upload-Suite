@@ -36,12 +36,29 @@
 - **MainWindow.xaml.cs** - Click handler with progress display and auto-registration
 - **Auto Registration** - If new games detected, automatically runs `game_mounter.elf` via shell for home screen registration
 
+### ⚡ Client Improvements
+- **Real-Time Speed Display** - New sliding window algorithm (10 samples over 5 seconds) for accurate real-time upload speed
+- **Smoother ETA** - Blended speed calculation (60% real-time + 40% average) with better time formatting (hours/minutes/seconds)
+- **Speed Display** - Shows both real-time and average speed: `Speed: 95 MB/s (avg 88 MB/s)`
+- **Duplicate File Dialog** - New `DuplicateFileDialog` for handling file conflicts during upload
+- **Move Dialog Refactor** - Replaced inline move dialog code with reusable `ShowPathPickerDialogAsync()`
+- **FormatFileSize Refactor** - Moved to static `FileUtils.FormatFileSize()` class for code reuse
+- **ETA Smoothing** - Reduced `ETASmoothingFactor` from 0.3 to 0.15 for less jumpy ETA display
+
 ### 🐛 Bug Fixes
+
+#### Payload Fixes
 - **Fixed IOVEC_ENTRY(NULL) crash** - `strlen(NULL)` with `-O3` optimization caused segfault in `remount_system_ex()`
 - **Fixed libSceAppInstUtil startup crash** - Library cannot be loaded in etaHEN payload context (crashes dynamic linker). Switched to standalone `game_mounter.elf` for registration
 - **Fixed dlopen crash** - `dlopen("libSceAppInstUtil.sprx")` crashes payload thread. Removed dynamic loading approach
 - **Removed system() calls** - `system("rm -rf ...")` replaced with safe recursive `rmdir_recursive()` to prevent payload hangs
 - **Fixed compile warnings** - Removed unused `#include <dlfcn.h>`, re-enabled `auto_unmount_deleted_games()`
+
+#### Client Fixes
+- **Fixed Shell Terminal hardcoded IP** - Shell was connecting to hardcoded `192.168.0.160` instead of the configured PS5 IP address
+- **Fixed ETA jumping** - ETA no longer jumps erratically during uploads due to improved smoothing
+- **Fixed speed dropping to 0** - Sliding window prevents speed display from showing 0 during brief pauses
+- **Fixed files remaining counter** - Simplified calculation with `Math.Max(0, ...)` to prevent negative values
 
 ### 📝 Technical Notes
 - `libSceAppInstUtil.sprx` is **not available** in etaHEN payload context (both static linking and dlopen crash)

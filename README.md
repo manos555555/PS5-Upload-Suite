@@ -194,10 +194,20 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 - **sce_sys Copy** - Copies game metadata to `/user/app/` and `/user/appmeta/`
 - **mount.lnk Tracking** - Creates mount link files for persistent mount state
 
+### ⚡ Client Improvements
+- **Real-Time Speed Display** - Sliding window algorithm for accurate real-time upload speed
+- **Smoother ETA** - Blended speed calculation (60% real-time + 40% average) with better formatting
+- **Duplicate File Dialog** - New dialog for handling file conflicts during upload
+- **Move Dialog Refactor** - Reusable `ShowPathPickerDialogAsync()` replaces inline code
+
 ### 🐛 Bug Fixes
 - **Fixed IOVEC_ENTRY(NULL) crash** - `strlen(NULL)` with `-O3` optimization caused payload crash
 - **Fixed libSceAppInstUtil crash** - Library not available in etaHEN payload context, switched to standalone registration
 - **Removed system() calls** - Replaced `system("rm -rf ...")` with safe recursive delete to prevent hangs
+- **Fixed Shell Terminal hardcoded IP** - Shell was connecting to hardcoded IP instead of configured PS5 address
+- **Fixed ETA jumping** - ETA no longer jumps erratically during uploads
+- **Fixed speed dropping to 0** - Sliding window prevents speed display from showing 0 during pauses
+- **Fixed files remaining counter** - Prevented negative values in remaining files display
 
 ---
 
