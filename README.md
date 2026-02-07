@@ -36,9 +36,10 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 - Self-contained executable (no .NET installation required)
 - Modern dark theme UI
 - Drag & drop file/folder upload
-- Real-time upload progress with speed tracking
-- Transfer History with success/failed tracking
-- Privacy-focused (no storage monitoring)
+- Real-time upload progress with sliding window speed tracking
+- Transfer History with success/failed tracking and retry
+- PS5 storage display (free/used/total)
+- Game mounting with one-click Mount Games button
 
 ### 3. 📱 Android Mobile Client
 - **File:** `PS5UploadMobile.apk`
@@ -77,38 +78,45 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 
 ## 🎨 Features
 
-### PS5 Server
-✅ **High-Speed Protocol** - Custom binary protocol  
-✅ **4MB Buffers** - Maximum throughput  
-✅ **Direct Disk I/O** - No temp files  
-✅ **Multi-threaded** - Handle multiple clients  
-✅ **Robust Error Handling** - Graceful failures  
+### PS5 Server Payload
+✅ **High-Speed Protocol** - Custom binary protocol for maximum speed  
+✅ **8MB Buffer** - Large buffer for high throughput  
+✅ **16MB Socket Buffers** - Maximum network throughput  
+✅ **Direct Disk I/O** - No temp files, direct write syscalls  
+✅ **Multi-threaded** - Handle multiple clients simultaneously  
+✅ **Per-File Mutex** - Safe parallel uploads without corruption  
+✅ **5-Minute Socket Timeout** - No connection drops on large files  
+✅ **Game Mounting** - nullfs mount, DRM patching, metadata copy  
+✅ **Shell Commands** - Built-in shell with ls, cd, cat, mkdir, rm, etc.  
+✅ **Filesystem Indexing** - In-memory index for instant search  
 
 ### Windows Client
-✅ **Modern UI** - Dark theme, maximized window for better visibility  
+✅ **Modern UI** - Dark theme, maximized window  
 ✅ **Drag & Drop** - Files and folders  
-✅ **Browse PS5** - Navigate filesystem  
-✅ **Real-time Progress** - Speed & percentage tracking  
-✅ **Optimized Upload** - 8 parallel connections for 88-110 MB/s aggregate speed  
+✅ **Browse PS5** - Navigate filesystem with favorites  
+✅ **Real-time Speed** - Sliding window algorithm for accurate speed display  
+✅ **Parallel Uploads** - 4 parallel chunked connections for 104+ MB/s  
 ✅ **Transfer History** - Track all uploads/downloads with success/failed status  
-✅ **Auto-Clear History** - Optional auto-clear on startup  
+✅ **Retry Failed Transfers** - Right-click to retry failed uploads  
+✅ **Duplicate File Dialog** - Handle file conflicts during upload  
 ✅ **Folder Upload** - Recursive directory upload  
 ✅ **Download Files** - Download from PS5 to PC  
-✅ **🔍 Smart Search** - Full filesystem indexing with instant search (NEW v3.3)  
+✅ **💾 Storage Display** - Real-time PS5 storage info (free/used/total)  
+✅ **🔍 Smart Search** - Full filesystem indexing with instant search  
   - Wildcard support: `*.pkg`, `*loader*`, `game*.bin`
   - Size filters: `size:>1GB`, `size:<100MB`
   - Case-insensitive matching
   - Search both filename and full path
   - Double-click to navigate to folder
-✅ **💻 Shell Terminal** - Execute commands directly on PS5 (NEW v3.3)  
+✅ **💻 Shell Terminal** - Execute commands directly on PS5  
   - Run system commands remotely
   - Real-time output display
   - Command history
   - Working directory support
-✅ **Favorites/Bookmarks** - Quick navigation to saved paths  
-✅ **Multi-PS5 Support** - Save and switch between multiple PS5 profiles  
-✅ **🎮 Mount Games** - Mount uploaded games directly from the client (NEW v4.2)  
-  - Scans all game paths: internal, USB drives, M.2 SSD
+✅ **⭐ Favorites/Bookmarks** - Quick navigation to saved paths  
+✅ **👥 Multi-PS5 Profiles** - Save and switch between multiple PS5 consoles  
+✅ **🎮 Mount Games** - Mount uploaded games directly from the client  
+  - Scans all game paths: internal, USB drives (0-3), M.2 SSD
   - Duplicate detection across storage locations
   - Auto-cleanup of deleted game mounts
   - PS5 notifications with mount progress
