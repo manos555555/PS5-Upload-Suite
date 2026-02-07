@@ -1,5 +1,55 @@
 # Changelog - PS5 Upload Suite
 
+## Version 4.2.0 - Game Mounter Integration (February 7, 2026)
+
+### 🎮 Game Mounter Integration
+- **Mount Games Button** - New green "🎮 Mount Games" button in the client UI
+- One-click mounting of all uploaded games directly from the PS5 Upload Suite
+- Button disabled when disconnected, shows "⏳ Mounting..." during operation
+
+### 🔍 Multi-Path Game Scanning
+- Scans **6 locations** for games:
+  - `/data/etaHEN/games` (internal storage)
+  - `/mnt/usb0/games` through `/mnt/usb3/games` (USB drives)
+  - `/mnt/ext0/games` (M.2 SSD)
+- First pass counts total games, second pass processes them
+- PS5 notifications show real-time progress: "Mounting 3/10 (30%) - Game Name"
+
+### 🔄 Smart Mount Features
+- **Duplicate Detection** - Same title ID across multiple drives mounted only once
+- **Auto-Cleanup** - `auto_unmount_deleted_games()` removes stale mount entries
+- **Already Mounted Detection** - Skips games that are already mounted via nullfs
+- **sce_sys Validation** - Verifies game directory has valid `sce_sys/` before mounting
+
+### 🔧 Payload Changes
+- **New Command** - `CMD_MOUNT_GAMES` (0x30) added to protocol
+- **nullfs Mount** - Games mounted to `/system_ex/app/<title_id>`
+- **DRM Patching** - Automatic `applicationDrmType` fix in `param.json`
+- **Metadata Copy** - `sce_sys` copied to `/user/app/` and `/user/appmeta/`
+- **mount.lnk** - Tracks mount source path for cleanup and remount
+- **Safe Delete** - Replaced `system("rm -rf ...")` with `rmdir_recursive()` to prevent hangs
+- **remount_system_ex()** - Remounts `/system_ex` as writable for game installation
+
+### 🖥️ Client Changes
+- **Protocol.cs** - Added `MountGames = 0x30` enum and `MountGamesAsync()` method
+- **MainWindow.xaml** - Green "🎮 Mount Games" button between Upload and Cancel
+- **MainWindow.xaml.cs** - Click handler with progress display and auto-registration
+- **Auto Registration** - If new games detected, automatically runs `game_mounter.elf` via shell for home screen registration
+
+### 🐛 Bug Fixes
+- **Fixed IOVEC_ENTRY(NULL) crash** - `strlen(NULL)` with `-O3` optimization caused segfault in `remount_system_ex()`
+- **Fixed libSceAppInstUtil startup crash** - Library cannot be loaded in etaHEN payload context (crashes dynamic linker). Switched to standalone `game_mounter.elf` for registration
+- **Fixed dlopen crash** - `dlopen("libSceAppInstUtil.sprx")` crashes payload thread. Removed dynamic loading approach
+- **Removed system() calls** - `system("rm -rf ...")` replaced with safe recursive `rmdir_recursive()` to prevent payload hangs
+- **Fixed compile warnings** - Removed unused `#include <dlfcn.h>`, re-enabled `auto_unmount_deleted_games()`
+
+### 📝 Technical Notes
+- `libSceAppInstUtil.sprx` is **not available** in etaHEN payload context (both static linking and dlopen crash)
+- Game registration (`sceAppInstUtilAppInstallTitleDir`) is handled by the standalone `game_mounter.elf` which runs as a separate ELF with its own library dependencies
+- The upload suite payload handles nullfs mounting, metadata copy, and DRM patching — everything except the final system registration
+
+---
+
 ## Version 4.1.0 - Memory Optimization & Large File Handling (February 5, 2026)
 
 ### 🧠 Memory & Performance Improvements

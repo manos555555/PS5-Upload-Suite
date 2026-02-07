@@ -67,7 +67,15 @@ namespace PS5Upload
         private ConcurrentDictionary<string, long> _chunkLogLastBytes = new ConcurrentDictionary<string, long>(); // Track last log emission per file
         private readonly object _speedLock = new object();
         private TimeSpan _smoothedETA = TimeSpan.Zero;
-        private const double ETASmoothingFactor = 0.3; // Smooth ETA to avoid jumping
+        private const double ETASmoothingFactor = 0.15; // Lower = smoother ETA (less jumpy)
+        
+        // Sliding window for real-time speed calculation
+        private const int SpeedWindowSize = 10; // 10 samples at 500ms = 5 second window
+        private long[] _speedWindowBytes = new long[SpeedWindowSize];
+        private DateTime[] _speedWindowTimes = new DateTime[SpeedWindowSize];
+        private int _speedWindowIndex = 0;
+        private int _speedWindowCount = 0;
+        private double _currentSpeed = 0; // Real-time speed in bytes/sec
         
         // Current file progress tracking (for largest active file)
         private string _currentFileName = "";
@@ -238,6 +246,7 @@ namespace PS5Upload
                     ConnectButton.Content = "🟢 Disconnect";
                     ConnectButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.Green);
                     UploadButton.IsEnabled = true;
+                    MountGamesButton.IsEnabled = true;
                 });
                 
                 await LoadPS5DirectoryAsync(_currentPS5Path);
@@ -402,35 +411,57 @@ namespace PS5Upload
             // When uploading thousands of small files, Invoke blocks the UI thread
             Dispatcher.InvokeAsync(() =>
             {
-                // Update files remaining counter: total - completed = remaining (active tasks are in progress, not remaining)
-                int remainingFiles = _totalFilesToUpload - completedFiles;
-                if (remainingFiles < 0)
-                {
-                    remainingFiles = 0;
-                }
+                // Update files remaining counter
+                int remainingFiles = Math.Max(0, _totalFilesToUpload - completedFiles);
                 FilesRemainingText.Text = $"Files: {completedFiles} / {_totalFilesToUpload} ({remainingFiles} remaining)";
                 
                 // Update total progress
                 double totalPercent = _totalBytesToUpload > 0 ? (double)_totalBytesUploaded / _totalBytesToUpload * 100 : 0;
                 TotalProgressBar.Value = totalPercent;
+                TotalProgressText.Text = $"Total: {completedFiles} / {_totalFilesToUpload} files ({FormatFileSize(_totalBytesUploaded)} / {FormatFileSize(_totalBytesToUpload)}) [{totalPercent:F1}%]";
                 
-                if (completedFiles > 0)
-                {
-                    TotalProgressText.Text = $"Total: {completedFiles} / {_totalFilesToUpload} files ({FormatFileSize(_totalBytesUploaded)} / {FormatFileSize(_totalBytesToUpload)})";
-                }
-                else
-                {
-                    // Real-time update without completed file count
-                    TotalProgressText.Text = $"Total: {FormatFileSize(_totalBytesUploaded)} / {FormatFileSize(_totalBytesToUpload)} ({totalPercent:F1}%)";
-                }
-                
-                // Calculate speed as simple average: total bytes / total time (stable network speed)
                 var elapsed = DateTime.Now - _uploadStartTime;
-                double displaySpeed = elapsed.TotalSeconds > 0 ? _totalBytesUploaded / elapsed.TotalSeconds : 0;
-                long remaining = _totalBytesToUpload - _totalBytesUploaded;
-                TimeSpan rawETA = displaySpeed > 0 ? TimeSpan.FromSeconds(remaining / displaySpeed) : TimeSpan.Zero;
+                long currentBytes = Interlocked.Read(ref _totalBytesUploaded);
                 
-                // Apply exponential smoothing to ETA for stable display
+                // --- Sliding window real-time speed ---
+                var now = DateTime.Now;
+                _speedWindowBytes[_speedWindowIndex] = currentBytes;
+                _speedWindowTimes[_speedWindowIndex] = now;
+                _speedWindowIndex = (_speedWindowIndex + 1) % SpeedWindowSize;
+                if (_speedWindowCount < SpeedWindowSize) _speedWindowCount++;
+                
+                double realtimeSpeed = 0;
+                if (_speedWindowCount >= 2)
+                {
+                    int oldestIndex = (_speedWindowIndex - _speedWindowCount + SpeedWindowSize) % SpeedWindowSize;
+                    long bytesDelta = currentBytes - _speedWindowBytes[oldestIndex];
+                    double timeDelta = (now - _speedWindowTimes[oldestIndex]).TotalSeconds;
+                    if (timeDelta > 0.1)
+                    {
+                        realtimeSpeed = bytesDelta / timeDelta;
+                    }
+                }
+                
+                // Smooth the real-time speed to avoid jitter
+                if (_currentSpeed <= 0)
+                {
+                    _currentSpeed = realtimeSpeed;
+                }
+                else if (realtimeSpeed > 0)
+                {
+                    _currentSpeed = (_currentSpeed * 0.7) + (realtimeSpeed * 0.3);
+                }
+                
+                // Average speed for comparison
+                double avgSpeed = elapsed.TotalSeconds > 0 ? currentBytes / elapsed.TotalSeconds : 0;
+                
+                // --- ETA calculation using blended speed ---
+                // Use 60% real-time + 40% average for stable but responsive ETA
+                double etaSpeed = (_currentSpeed * 0.6) + (avgSpeed * 0.4);
+                long remainingBytes = _totalBytesToUpload - currentBytes;
+                TimeSpan rawETA = etaSpeed > 0 ? TimeSpan.FromSeconds(remainingBytes / etaSpeed) : TimeSpan.Zero;
+                
+                // Apply exponential smoothing to ETA
                 if (_smoothedETA == TimeSpan.Zero)
                 {
                     _smoothedETA = rawETA;
@@ -438,13 +469,23 @@ namespace PS5Upload
                 else if (rawETA.TotalSeconds > 0)
                 {
                     double smoothedSeconds = (_smoothedETA.TotalSeconds * (1 - ETASmoothingFactor)) + (rawETA.TotalSeconds * ETASmoothingFactor);
-                    _smoothedETA = TimeSpan.FromSeconds(smoothedSeconds);
+                    _smoothedETA = TimeSpan.FromSeconds(Math.Max(0, smoothedSeconds));
                 }
                 TimeSpan eta = _smoothedETA;
                 
-                // Update speed and ETA
-                UploadSpeedText.Text = $"Speed: {FormatFileSize((long)displaySpeed)}/s | {activeTaskCount} active";
-                UploadETAText.Text = $"ETA: {eta:hh\\:mm\\:ss} | Elapsed: {elapsed:hh\\:mm\\:ss}";
+                // --- Update UI ---
+                UploadSpeedText.Text = $"Speed: {FormatFileSize((long)_currentSpeed)}/s (avg {FormatFileSize((long)avgSpeed)}/s) | {activeTaskCount} active";
+                
+                // Format ETA nicely
+                string etaStr;
+                if (eta.TotalHours >= 1)
+                    etaStr = $"{(int)eta.TotalHours}h {eta.Minutes:D2}m {eta.Seconds:D2}s";
+                else if (eta.TotalMinutes >= 1)
+                    etaStr = $"{(int)eta.TotalMinutes}m {eta.Seconds:D2}s";
+                else
+                    etaStr = $"{eta.Seconds}s";
+                
+                UploadETAText.Text = $"ETA: {etaStr} | Elapsed: {elapsed:hh\\:mm\\:ss}";
                 
                 if (activeTaskCount > 0)
                 {
@@ -560,6 +601,7 @@ namespace PS5Upload
                     ConnectButton.Content = "🔴 Disconnected";
                     ConnectButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.DarkRed);
                     UploadButton.IsEnabled = false;
+                    MountGamesButton.IsEnabled = false;
                     _ps5Files.Clear();
                 });
                 
@@ -586,6 +628,7 @@ namespace PS5Upload
                         ConnectButton.Content = "🟢 Disconnect";
                         ConnectButton.Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Colors.DarkGreen);
                         UploadButton.IsEnabled = true;
+                        MountGamesButton.IsEnabled = true;
                     });
                     
                     // Auto-connect Shell Terminal
@@ -831,23 +874,34 @@ namespace PS5Upload
             _uploadCancellation = new CancellationTokenSource();
 
             Log("========== UPLOAD STARTED ==========");
+            
+            // Snapshot local files list for background processing
+            var localFilesCopy = _localFiles.ToList();
+            string currentPath = _currentPS5Path;
+            
+            // Show immediate feedback so user knows it's working
+            UploadFileNameText.Text = "Preparing upload...";
+            TotalProgressText.Text = "Collecting files...";
+
+            // Move heavy file collection + byte calculation OFF the UI thread
             Log("Collecting files...");
-
-            // Collect all files to upload
-            var allFiles = new List<(string localPath, string remotePath)>();
-            foreach (var item in _localFiles)
+            var allFiles = await Task.Run(() =>
             {
-                string targetBasePath = item.RemotePathOverride ?? (_currentPS5Path + "/" + item.Name);
-
-                if (item.IsDirectory)
+                var files = new List<(string localPath, string remotePath)>();
+                foreach (var item in localFilesCopy)
                 {
-                    CollectFilesFromDirectory(item.FullPath, targetBasePath, allFiles);
+                    string targetBasePath = item.RemotePathOverride ?? (currentPath + "/" + item.Name);
+                    if (item.IsDirectory)
+                    {
+                        CollectFilesFromDirectory(item.FullPath, targetBasePath, files);
+                    }
+                    else
+                    {
+                        files.Add((item.FullPath, targetBasePath));
+                    }
                 }
-                else
-                {
-                    allFiles.Add((item.FullPath, targetBasePath));
-                }
-            }
+                return files;
+            });
             
             // Check for duplicates and filter files
             Log("Checking for existing files...");
@@ -866,19 +920,17 @@ namespace PS5Upload
 
             _totalFilesToUpload = allFiles.Count;
             
-            // Calculate total bytes incrementally to avoid creating 156K FileInfo objects at once (causes crash)
-            _totalBytesToUpload = 0;
-            foreach (var file in allFiles)
+            // Calculate total bytes on background thread to avoid UI freeze on large game folders
+            _totalBytesToUpload = await Task.Run(() =>
             {
-                try
+                long total = 0;
+                foreach (var file in allFiles)
                 {
-                    _totalBytesToUpload += new FileInfo(file.localPath).Length;
+                    try { total += new FileInfo(file.localPath).Length; }
+                    catch { }
                 }
-                catch
-                {
-                    // Skip files that can't be accessed
-                }
-            }
+                return total;
+            });
             _totalBytesUploaded = 0;
             _completedFiles = 0;
             _uploadStartTime = DateTime.Now;
@@ -886,6 +938,9 @@ namespace PS5Upload
             _fileChunkProgressBytes.Clear();
             _chunkLogLastBytes.Clear();
             _smoothedETA = TimeSpan.Zero;
+            _speedWindowIndex = 0;
+            _speedWindowCount = 0;
+            _currentSpeed = 0;
             _smallFileBatchRemainder = 0;
             _smallFileCompletedTotal = 0;
             _smallFileBatchBytes = 0;
@@ -920,19 +975,40 @@ namespace PS5Upload
                     Log("✅ Reconnected successfully");
                 }
                 
+                int dirCreated = 0;
+                int dirTotal = directories.Count;
+                int dirLogInterval = Math.Max(1, dirTotal / 10); // Log every 10% progress
+                
                 foreach (var dir in directories)
                 {
-                    if (!string.IsNullOrEmpty(dir))
+                    if (string.IsNullOrEmpty(dir)) continue;
+                    
+                    // Update UI progress without flooding the log
+                    if (dirCreated % dirLogInterval == 0 || dirCreated == 0)
                     {
-                        Log($"📁 Creating dir: {dir}");
+                        _ = Dispatcher.InvokeAsync(() =>
+                        {
+                            UploadFileNameText.Text = $"Creating directories... ({dirCreated}/{dirTotal})";
+                        }, System.Windows.Threading.DispatcherPriority.Background);
+                    }
+                    
+                    try
+                    {
+                        // Add timeout to prevent infinite hang on stuck connection
+                        using var dirCts = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+                        var dirTask = _protocol.CreateDirAsync(dir);
+                        var completedTask = await Task.WhenAny(dirTask, Task.Delay(-1, dirCts.Token));
+                        if (completedTask != dirTask)
+                        {
+                            throw new TimeoutException($"Timeout creating directory: {dir}");
+                        }
+                        await dirTask; // Propagate any exception
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"⚠️ Failed to create dir {dir}: {ex.Message}, retrying...");
                         try
                         {
-                            await _protocol.CreateDirAsync(dir);
-                        }
-                        catch (Exception ex)
-                        {
-                            Log($"⚠️ Failed to create dir {dir}: {ex.Message}, retrying...");
-                            // Try to reconnect and retry
                             _protocol.Disconnect();
                             await Task.Delay(500);
                             if (await _protocol.ConnectAsync(_ps5IpAddress))
@@ -944,9 +1020,15 @@ namespace PS5Upload
                                 throw new Exception($"Failed to create directory {dir} after reconnection");
                             }
                         }
+                        catch (Exception retryEx)
+                        {
+                            Log($"❌ Directory creation failed permanently: {dir} - {retryEx.Message}");
+                            // Continue with remaining directories instead of crashing
+                        }
                     }
+                    dirCreated++;
                 }
-                Log($"✅ Created {directories.Count} directories");
+                Log($"✅ Created {dirCreated}/{dirTotal} directories");
                 
                 // Ensure connection is still active after directory creation
                 if (!_protocol.IsConnected)
@@ -963,8 +1045,41 @@ namespace PS5Upload
                 _uiUpdateTimer.Start();
                 
 
+                // Pre-warm connection pool to eliminate per-file connection setup delay
+                int preWarmCount = Math.Min(MaxParallelUploads - 1, allFiles.Count); // -1 because main loop acquires on demand
+                Log($"🚀 Starting parallel upload with {MaxParallelUploads} connections (pre-warming {preWarmCount})...");
+                var preWarmTasks = new List<Task<PS5Protocol?>>();
+                for (int i = 0; i < preWarmCount; i++)
+                {
+                    preWarmTasks.Add(Task.Run(async () =>
+                    {
+                        try
+                        {
+                            var conn = new PS5Protocol();
+                            if (await conn.ConnectAsync(_ps5IpAddress))
+                            {
+                                Interlocked.Increment(ref _currentPoolConnections);
+                                return conn;
+                            }
+                            conn.Dispose();
+                        }
+                        catch { }
+                        return (PS5Protocol?)null;
+                    }));
+                }
+                await Task.WhenAll(preWarmTasks);
+                int pooled = 0;
+                foreach (var t in preWarmTasks)
+                {
+                    if (t.Result != null)
+                    {
+                        _connectionPool.Enqueue(t.Result);
+                        pooled++;
+                    }
+                }
+                Log($"✅ {pooled} connections ready");
+
                 // PARALLEL UPLOAD: Process files in batches using multiple connections
-                Log($"🚀 Starting parallel upload with {MaxParallelUploads} connections");
                 var fileQueue = new Queue<(string localPath, string remotePath)>(allFiles);
                 var activeTasks = new List<Task>();
                 var taskToConnection = new Dictionary<Task, PS5Protocol>(); // FIX: Map tasks to connections directly
@@ -1002,16 +1117,14 @@ namespace PS5Upload
                         if (isLargeFile && currentLargeFileCount >= MaxParallelLargeFiles)
                         {
                             fileQueue.Enqueue((localPath, remotePath));
-                            Log($"⏸️ Large file queued, waiting for slot ({currentLargeFileCount}/{MaxParallelLargeFiles} large files active): {fileName} ({FormatFileSize(fileSize)})");
-                            break;
+                            break; // Wait for a large file slot to free up
                         }
 
                         int currentHugeFileCount = Volatile.Read(ref _activeHugeUploads);
                         if (isHugeFile && currentHugeFileCount >= MaxParallelHugeFiles)
                         {
                             fileQueue.Enqueue((localPath, remotePath));
-                            Log($"⏸️ Huge file queued, waiting for slot ({currentHugeFileCount}/{MaxParallelHugeFiles} huge files active): {fileName} ({FormatFileSize(fileSize)})");
-                            break;
+                            break; // Wait for a huge file slot to free up
                         }
 
                         PS5Protocol connection;
@@ -1037,7 +1150,6 @@ namespace PS5Upload
                             Interlocked.Increment(ref _activeHugeUploads);
                         }
 
-                        Log($"📤 Starting upload: {fileName} (Queue: {fileQueue.Count}, Active: {activeTasks.Count}, Size: {FormatFileSize(fileSize)})");
                         var task = UploadFileParallelAsync(connection, localPath, remotePath, _uploadCancellation.Token);
                         activeTasks.Add(task);
                         taskToConnection[task] = connection; // FIX: Map task to connection directly
@@ -1056,10 +1168,8 @@ namespace PS5Upload
 
                     if (activeTasks.Count > 0)
                     {
-                        Log($"⏳ Waiting for task completion (Active: {activeTasks.Count})");
                         // Wait for any task to complete
                         var completedTask = await Task.WhenAny(activeTasks);
-                        Log($"✅ Task completed");
                         
                         // Await the task to catch any exceptions
                         bool taskSucceeded = false;
@@ -1069,7 +1179,6 @@ namespace PS5Upload
                         try
                         {
                             await completedTask;
-                            Log($"✅ Task awaited successfully");
                             taskSucceeded = true;
                         }
                         catch (Exception ex)
@@ -1116,10 +1225,10 @@ namespace PS5Upload
                                 }
                             }
                             
-                            Dispatcher.Invoke(() =>
+                            _ = Dispatcher.InvokeAsync(() =>
                             {
                                 UploadFileNameText.Text = $"Upload error: {ex.Message}";
-                            });
+                            }, System.Windows.Threading.DispatcherPriority.Background);
                         }
                         
                         // FIX: Use Dictionary-based connection lookup instead of index-based
@@ -1156,7 +1265,6 @@ namespace PS5Upload
                         // FIX: Cleanup connection using Dictionary lookup (no more index mismatch!)
                         if (taskToConnection.TryGetValue(completedTask, out var completedConn))
                         {
-                            Log($"🧹 Cleaning up connection for completed task");
                             taskToConnection.Remove(completedTask);
 
                             if (taskIsLargeFile.TryGetValue(completedTask, out var wasLarge) && wasLarge)
@@ -1378,6 +1486,10 @@ namespace PS5Upload
 
                     int nextChunkIndex = -1;
                     var workerTasks = new List<Task>(workerCount);
+                    
+                    // CRITICAL: Chunk 0 must complete START_UPLOAD (file creation + pre-allocation)
+                    // before other chunks can open the file. Use a gate to synchronize.
+                    var chunk0Ready = new SemaphoreSlim(0, 1);
 
                     for (int workerId = 0; workerId < workerCount; workerId++)
                     {
@@ -1406,7 +1518,18 @@ namespace PS5Upload
                                     break;
                                 }
 
-                                await UploadChunkAsync(workerConnection!, chunkIndex);
+                                // Non-zero chunks must wait for chunk 0's START_UPLOAD to complete
+                                // (chunk 0 creates and pre-allocates the file on the PS5)
+                                if (chunkIndex > 0)
+                                {
+                                    await chunk0Ready.WaitAsync(cancellationToken);
+                                    chunk0Ready.Release(); // Re-release so other workers can also pass
+                                }
+
+                                // For chunk 0, pass a callback that signals the gate
+                                // immediately after RESP_READY (file created on PS5)
+                                Action? readyCallback = chunkIndex == 0 ? () => chunk0Ready.Release() : null;
+                                await UploadChunkAsync(workerConnection!, chunkIndex, readyCallback);
                             }
                         }
                         finally
@@ -1425,7 +1548,7 @@ namespace PS5Upload
                         }
                     }
 
-                    async Task UploadChunkAsync(PS5Protocol workerConnection, int chunkIndex)
+                    async Task UploadChunkAsync(PS5Protocol workerConnection, int chunkIndex, Action? readyCallback = null)
                     {
                         long offset = chunkIndex * chunkSize;
                         long size = Math.Min(chunkSize, fileInfo.Length - offset);
@@ -1435,7 +1558,7 @@ namespace PS5Upload
 
                         var progress = CreateChunkProgressReporter(offset, size, humanIndex, totalChunks);
 
-                        bool success = await workerConnection.UploadFileAsync(localPath, remotePath, progress, cancellationToken, offset, size);
+                        bool success = await workerConnection.UploadFileAsync(localPath, remotePath, progress, cancellationToken, offset, size, readyCallback);
 
                         if (!success)
                         {
@@ -1589,7 +1712,7 @@ namespace PS5Upload
                     Log($"✅ Upload complete: {fileName}");
                 }
 
-                Dispatcher.Invoke(() =>
+                _ = Dispatcher.InvokeAsync(() =>
                 {
                     _completedTransfers.Add(new TransferHistoryItem
                     {
@@ -1598,7 +1721,7 @@ namespace PS5Upload
                         Size = FormatFileSize(fileInfo.Length),
                         Timestamp = DateTime.Now
                     });
-                });
+                }, System.Windows.Threading.DispatcherPriority.Background);
             }
             catch (Exception ex)
             {
@@ -1611,7 +1734,7 @@ namespace PS5Upload
                 _chunkLogLastBytes.TryRemove(localPath, out _);
 
                 // Add to failed transfers
-                Dispatcher.Invoke(() =>
+                _ = Dispatcher.InvokeAsync(() =>
                 {
                     _failedTransfers.Add(new TransferHistoryItem
                     {
@@ -1830,228 +1953,237 @@ namespace PS5Upload
             }
         }
 
-        private async void CopyMenuItem_Click(object sender, RoutedEventArgs e)
+        private Task<string?> ShowPathPickerDialogAsync(string title, string actionLabel, string itemName, string defaultPath)
         {
-            if (PS5FilesListBox.SelectedItem is PS5FileItem item)
+            string? result = null;
+            
+            var dialog = new Window
             {
-                var dialog = new Window
+                Title = title,
+                Width = 500,
+                Height = 180,
+                WindowStartupLocation = WindowStartupLocation.CenterOwner,
+                Owner = this,
+                Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
+            };
+
+            var grid = new Grid { Margin = new Thickness(20) };
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+            grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+
+            var label = new TextBlock
+            {
+                Text = "Destination path:",
+                Foreground = System.Windows.Media.Brushes.White,
+                Margin = new Thickness(0, 0, 0, 10)
+            };
+            Grid.SetRow(label, 0);
+
+            var pathPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Margin = new Thickness(0, 0, 0, 15)
+            };
+            Grid.SetRow(pathPanel, 1);
+
+            var textBox = new TextBox
+            {
+                Text = defaultPath,
+                Width = 350
+            };
+
+            var browseButton = new Button
+            {
+                Content = "Browse...",
+                Width = 80,
+                Margin = new Thickness(10, 0, 0, 0)
+            };
+            browseButton.Click += async (s, args) =>
+            {
+                var pathDialog = new Window
                 {
-                    Title = "Copy To",
+                    Title = "Select PS5 Folder",
                     Width = 500,
-                    Height = 180,
+                    Height = 450,
                     WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Owner = this,
+                    Owner = dialog,
                     Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
                 };
 
-                var grid = new Grid { Margin = new Thickness(20) };
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                var pathGrid = new Grid { Margin = new Thickness(10) };
+                pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
+                pathGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
+                pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
 
-                var label = new TextBlock
+                var pathLabel = new TextBlock
                 {
-                    Text = "Destination path:",
+                    Text = "Current path:",
                     Foreground = System.Windows.Media.Brushes.White,
+                    Margin = new Thickness(0, 0, 0, 5)
+                };
+                Grid.SetRow(pathLabel, 0);
+
+                var pathTextBox = new TextBox
+                {
+                    Text = _currentPS5Path,
+                    IsReadOnly = true,
                     Margin = new Thickness(0, 0, 0, 10)
                 };
-                Grid.SetRow(label, 0);
+                Grid.SetRow(pathTextBox, 1);
 
-                var pathPanel = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Margin = new Thickness(0, 0, 0, 15)
-                };
-                Grid.SetRow(pathPanel, 1);
+                var listBox = new ListBox { Margin = new Thickness(0, 0, 0, 10) };
+                Grid.SetRow(listBox, 2);
 
-                var textBox = new TextBox
-                {
-                    Text = _currentPS5Path + "/" + item.Name,
-                    Width = 350
-                };
-
-                var browseButton = new Button
-                {
-                    Content = "Browse...",
-                    Width = 80,
-                    Margin = new Thickness(10, 0, 0, 0)
-                };
-                browseButton.Click += async (s, args) =>
-                {
-                    var pathDialog = new Window
-                    {
-                        Title = "Select PS5 Folder",
-                        Width = 500,
-                        Height = 450,
-                        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                        Owner = dialog,
-                        Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
-                    };
-
-                    var pathGrid = new Grid { Margin = new Thickness(10) };
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-                    var pathLabel = new TextBlock
-                    {
-                        Text = "Current path:",
-                        Foreground = System.Windows.Media.Brushes.White,
-                        Margin = new Thickness(0, 0, 0, 5)
-                    };
-                    Grid.SetRow(pathLabel, 0);
-
-                    var pathTextBox = new TextBox
-                    {
-                        Text = _currentPS5Path,
-                        IsReadOnly = true,
-                        Margin = new Thickness(0, 0, 0, 10)
-                    };
-                    Grid.SetRow(pathTextBox, 1);
-
-                    var listBox = new ListBox { Margin = new Thickness(0, 0, 0, 10) };
-                    Grid.SetRow(listBox, 2);
-
-                    var buttonPanel = new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        HorizontalAlignment = HorizontalAlignment.Right
-                    };
-                    Grid.SetRow(buttonPanel, 3);
-
-                    var selectCurrentButton = new Button { Content = "Select Current", Width = 100, Margin = new Thickness(0, 0, 10, 0) };
-                    var selectButton = new Button { Content = "Select Folder", Width = 100, Margin = new Thickness(0, 0, 10, 0) };
-                    var cancelButton = new Button { Content = "Cancel", Width = 80 };
-
-                    buttonPanel.Children.Add(selectCurrentButton);
-                    buttonPanel.Children.Add(selectButton);
-                    buttonPanel.Children.Add(cancelButton);
-
-                    pathGrid.Children.Add(pathLabel);
-                    pathGrid.Children.Add(pathTextBox);
-                    pathGrid.Children.Add(listBox);
-                    pathGrid.Children.Add(buttonPanel);
-                    pathDialog.Content = pathGrid;
-
-                    string currentBrowsePath = _currentPS5Path;
-
-                    async Task LoadFolders(string path)
-                    {
-                        listBox.Items.Clear();
-                        pathTextBox.Text = path;
-                        currentBrowsePath = path;
-
-                        try
-                        {
-                            // Add parent directory option if not at root
-                            if (path != "/" && path.Contains("/"))
-                            {
-                                listBox.Items.Add("..");
-                            }
-
-                            var dirs = await _protocol.ListDirAsync(path);
-                            foreach (var dir in dirs.Where(d => d.IsDirectory))
-                            {
-                                listBox.Items.Add(dir.Name);
-                            }
-                        }
-                        catch
-                        {
-                            MessageBox.Show("Failed to load folders from: " + path, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                        }
-                    }
-
-                    listBox.MouseDoubleClick += async (ss, ee) =>
-                    {
-                        if (listBox.SelectedItem != null)
-                        {
-                            string selected = listBox.SelectedItem.ToString()!;
-                            if (selected == "..")
-                            {
-                                // Go to parent directory
-                                int lastSlash = currentBrowsePath.TrimEnd('/').LastIndexOf('/');
-                                if (lastSlash > 0)
-                                {
-                                    await LoadFolders(currentBrowsePath.Substring(0, lastSlash));
-                                }
-                                else if (lastSlash == 0)
-                                {
-                                    await LoadFolders("/");
-                                }
-                            }
-                            else
-                            {
-                                // Navigate into folder
-                                string newPath = currentBrowsePath.TrimEnd('/') + "/" + selected;
-                                await LoadFolders(newPath);
-                            }
-                        }
-                    };
-
-                    selectCurrentButton.Click += (ss, aa) =>
-                    {
-                        textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + item.Name;
-                        pathDialog.Close();
-                    };
-
-                    selectButton.Click += (ss, aa) =>
-                    {
-                        if (listBox.SelectedItem != null && listBox.SelectedItem.ToString() != "..")
-                        {
-                            string selected = listBox.SelectedItem.ToString()!;
-                            textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + selected + "/" + item.Name;
-                            pathDialog.Close();
-                        }
-                    };
-
-                    cancelButton.Click += (ss, aa) => { pathDialog.Close(); };
-
-                    // Load initial folders
-                    await LoadFolders(_currentPS5Path);
-
-                    pathDialog.ShowDialog();
-                };
-
-                pathPanel.Children.Add(textBox);
-                pathPanel.Children.Add(browseButton);
-
-                var buttonPanel = new StackPanel
+                var btnPanel = new StackPanel
                 {
                     Orientation = Orientation.Horizontal,
                     HorizontalAlignment = HorizontalAlignment.Right
                 };
-                Grid.SetRow(buttonPanel, 2);
+                Grid.SetRow(btnPanel, 3);
 
-                var okButton = new Button
+                var selectCurrentButton = new Button { Content = "Select Current", Width = 100, Margin = new Thickness(0, 0, 10, 0) };
+                var selectButton = new Button { Content = "Select Folder", Width = 100, Margin = new Thickness(0, 0, 10, 0) };
+                var cancelBtn = new Button { Content = "Cancel", Width = 80 };
+
+                btnPanel.Children.Add(selectCurrentButton);
+                btnPanel.Children.Add(selectButton);
+                btnPanel.Children.Add(cancelBtn);
+
+                pathGrid.Children.Add(pathLabel);
+                pathGrid.Children.Add(pathTextBox);
+                pathGrid.Children.Add(listBox);
+                pathGrid.Children.Add(btnPanel);
+                pathDialog.Content = pathGrid;
+
+                string currentBrowsePath = _currentPS5Path;
+
+                async Task LoadFolders(string path)
                 {
-                    Content = "Copy",
-                    Width = 80,
-                    Margin = new Thickness(0, 0, 10, 0)
-                };
-                okButton.Click += (s, args) => { dialog.DialogResult = true; dialog.Close(); };
+                    listBox.Items.Clear();
+                    pathTextBox.Text = path;
+                    currentBrowsePath = path;
 
-                var cancelButton = new Button
+                    try
+                    {
+                        if (path != "/" && path.Contains("/"))
+                        {
+                            listBox.Items.Add("..");
+                        }
+
+                        var dirs = await _protocol.ListDirAsync(path);
+                        foreach (var dir in dirs.Where(d => d.IsDirectory))
+                        {
+                            listBox.Items.Add(dir.Name);
+                        }
+                    }
+                    catch
+                    {
+                        MessageBox.Show("Failed to load folders from: " + path, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                }
+
+                listBox.MouseDoubleClick += async (ss, ee) =>
                 {
-                    Content = "Cancel",
-                    Width = 80
+                    if (listBox.SelectedItem != null)
+                    {
+                        string selected = listBox.SelectedItem.ToString()!;
+                        if (selected == "..")
+                        {
+                            int lastSlash = currentBrowsePath.TrimEnd('/').LastIndexOf('/');
+                            if (lastSlash > 0)
+                            {
+                                await LoadFolders(currentBrowsePath.Substring(0, lastSlash));
+                            }
+                            else if (lastSlash == 0)
+                            {
+                                await LoadFolders("/");
+                            }
+                        }
+                        else
+                        {
+                            string newPath = currentBrowsePath.TrimEnd('/') + "/" + selected;
+                            await LoadFolders(newPath);
+                        }
+                    }
                 };
-                cancelButton.Click += (s, args) => { dialog.DialogResult = false; dialog.Close(); };
 
-                buttonPanel.Children.Add(okButton);
-                buttonPanel.Children.Add(cancelButton);
+                selectCurrentButton.Click += (ss, aa) =>
+                {
+                    textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + itemName;
+                    pathDialog.Close();
+                };
 
-                grid.Children.Add(label);
-                grid.Children.Add(pathPanel);
-                grid.Children.Add(buttonPanel);
-                dialog.Content = grid;
+                selectButton.Click += (ss, aa) =>
+                {
+                    if (listBox.SelectedItem != null && listBox.SelectedItem.ToString() != "..")
+                    {
+                        string selected = listBox.SelectedItem.ToString()!;
+                        textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + selected + "/" + itemName;
+                        pathDialog.Close();
+                    }
+                };
 
-                if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(textBox.Text))
+                cancelBtn.Click += (ss, aa) => { pathDialog.Close(); };
+
+                await LoadFolders(_currentPS5Path);
+
+                pathDialog.ShowDialog();
+            };
+
+            pathPanel.Children.Add(textBox);
+            pathPanel.Children.Add(browseButton);
+
+            var buttonPanel = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                HorizontalAlignment = HorizontalAlignment.Right
+            };
+            Grid.SetRow(buttonPanel, 2);
+
+            var okButton = new Button
+            {
+                Content = actionLabel,
+                Width = 80,
+                Margin = new Thickness(0, 0, 10, 0)
+            };
+            okButton.Click += (s, args) => { dialog.DialogResult = true; dialog.Close(); };
+
+            var cancelButton = new Button
+            {
+                Content = "Cancel",
+                Width = 80
+            };
+            cancelButton.Click += (s, args) => { dialog.DialogResult = false; dialog.Close(); };
+
+            buttonPanel.Children.Add(okButton);
+            buttonPanel.Children.Add(cancelButton);
+
+            grid.Children.Add(label);
+            grid.Children.Add(pathPanel);
+            grid.Children.Add(buttonPanel);
+            dialog.Content = grid;
+
+            if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(textBox.Text))
+            {
+                result = textBox.Text;
+            }
+
+            return Task.FromResult(result);
+        }
+
+        private async void CopyMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (PS5FilesListBox.SelectedItem is PS5FileItem item)
+            {
+                string? destPath = await ShowPathPickerDialogAsync("Copy To", "Copy", item.Name, _currentPS5Path + "/" + item.Name);
+                if (destPath != null)
                 {
                     try
                     {
-                        await _protocol.CopyFileAsync(item.FullPath, textBox.Text);
-                        Log($"✅ Copied {item.Name} to {textBox.Text}");
+                        await _protocol.CopyFileAsync(item.FullPath, destPath);
+                        Log($"✅ Copied {item.Name} to {destPath}");
                         await LoadPS5DirectoryAsync(_currentPS5Path);
                     }
                     catch (Exception ex)
@@ -2067,224 +2199,13 @@ namespace PS5Upload
         {
             if (PS5FilesListBox.SelectedItem is PS5FileItem item)
             {
-                var dialog = new Window
-                {
-                    Title = "Move To",
-                    Width = 500,
-                    Height = 180,
-                    WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                    Owner = this,
-                    Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
-                };
-
-                var grid = new Grid { Margin = new Thickness(20) };
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                grid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-                var label = new TextBlock
-                {
-                    Text = "Destination path:",
-                    Foreground = System.Windows.Media.Brushes.White,
-                    Margin = new Thickness(0, 0, 0, 10)
-                };
-                Grid.SetRow(label, 0);
-
-                var pathPanel = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    Margin = new Thickness(0, 0, 0, 15)
-                };
-                Grid.SetRow(pathPanel, 1);
-
-                var textBox = new TextBox
-                {
-                    Text = _currentPS5Path + "/" + item.Name,
-                    Width = 350
-                };
-
-                var browseButton = new Button
-                {
-                    Content = "Browse...",
-                    Width = 80,
-                    Margin = new Thickness(10, 0, 0, 0)
-                };
-                browseButton.Click += async (s, args) =>
-                {
-                    var pathDialog = new Window
-                    {
-                        Title = "Select PS5 Folder",
-                        Width = 500,
-                        Height = 450,
-                        WindowStartupLocation = WindowStartupLocation.CenterOwner,
-                        Owner = dialog,
-                        Background = new System.Windows.Media.SolidColorBrush(System.Windows.Media.Color.FromRgb(30, 30, 30))
-                    };
-
-                    var pathGrid = new Grid { Margin = new Thickness(10) };
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = new GridLength(1, GridUnitType.Star) });
-                    pathGrid.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
-
-                    var pathLabel = new TextBlock
-                    {
-                        Text = "Current path:",
-                        Foreground = System.Windows.Media.Brushes.White,
-                        Margin = new Thickness(0, 0, 0, 5)
-                    };
-                    Grid.SetRow(pathLabel, 0);
-
-                    var pathTextBox = new TextBox
-                    {
-                        Text = _currentPS5Path,
-                        IsReadOnly = true,
-                        Margin = new Thickness(0, 0, 0, 10)
-                    };
-                    Grid.SetRow(pathTextBox, 1);
-
-                    var listBox = new ListBox { Margin = new Thickness(0, 0, 0, 10) };
-                    Grid.SetRow(listBox, 2);
-
-                    var buttonPanel = new StackPanel
-                    {
-                        Orientation = Orientation.Horizontal,
-                        HorizontalAlignment = HorizontalAlignment.Right
-                    };
-                    Grid.SetRow(buttonPanel, 3);
-
-                    var selectCurrentButton = new Button { Content = "Select Current", Width = 100, Margin = new Thickness(0, 0, 10, 0) };
-                    var selectButton = new Button { Content = "Select Folder", Width = 100, Margin = new Thickness(0, 0, 10, 0) };
-                    var cancelButton = new Button { Content = "Cancel", Width = 80 };
-
-                    buttonPanel.Children.Add(selectCurrentButton);
-                    buttonPanel.Children.Add(selectButton);
-                    buttonPanel.Children.Add(cancelButton);
-
-                    pathGrid.Children.Add(pathLabel);
-                    pathGrid.Children.Add(pathTextBox);
-                    pathGrid.Children.Add(listBox);
-                    pathGrid.Children.Add(buttonPanel);
-                    pathDialog.Content = pathGrid;
-
-                    string currentBrowsePath = _currentPS5Path;
-
-                    async Task LoadFolders(string path)
-                    {
-                        listBox.Items.Clear();
-                        pathTextBox.Text = path;
-                        currentBrowsePath = path;
-
-                        try
-                        {
-                            // Add parent directory option if not at root
-                            if (path != "/" && path.Contains("/"))
-                            {
-                                listBox.Items.Add("..");
-                            }
-
-                            var dirs = await _protocol.ListDirAsync(path);
-                            foreach (var dir in dirs.Where(d => d.IsDirectory))
-                            {
-                                listBox.Items.Add(dir.Name);
-                            }
-                        }
-                        catch
-                        {
-                            MessageBox.Show("Failed to load folders from: " + path, "Error", MessageBoxButton.OK, MessageBoxImage.Error);
-                        }
-                    }
-
-                    listBox.MouseDoubleClick += async (ss, ee) =>
-                    {
-                        if (listBox.SelectedItem != null)
-                        {
-                            string selected = listBox.SelectedItem.ToString()!;
-                            if (selected == "..")
-                            {
-                                // Go to parent directory
-                                int lastSlash = currentBrowsePath.TrimEnd('/').LastIndexOf('/');
-                                if (lastSlash > 0)
-                                {
-                                    await LoadFolders(currentBrowsePath.Substring(0, lastSlash));
-                                }
-                                else if (lastSlash == 0)
-                                {
-                                    await LoadFolders("/");
-                                }
-                            }
-                            else
-                            {
-                                // Navigate into folder
-                                string newPath = currentBrowsePath.TrimEnd('/') + "/" + selected;
-                                await LoadFolders(newPath);
-                            }
-                        }
-                    };
-
-                    selectCurrentButton.Click += (ss, aa) =>
-                    {
-                        textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + item.Name;
-                        pathDialog.Close();
-                    };
-
-                    selectButton.Click += (ss, aa) =>
-                    {
-                        if (listBox.SelectedItem != null && listBox.SelectedItem.ToString() != "..")
-                        {
-                            string selected = listBox.SelectedItem.ToString()!;
-                            textBox.Text = currentBrowsePath.TrimEnd('/') + "/" + selected + "/" + item.Name;
-                            pathDialog.Close();
-                        }
-                    };
-
-                    cancelButton.Click += (ss, aa) => { pathDialog.Close(); };
-
-                    // Load initial folders
-                    await LoadFolders(_currentPS5Path);
-
-                    pathDialog.ShowDialog();
-                };
-
-                pathPanel.Children.Add(textBox);
-                pathPanel.Children.Add(browseButton);
-
-                var buttonPanel = new StackPanel
-                {
-                    Orientation = Orientation.Horizontal,
-                    HorizontalAlignment = HorizontalAlignment.Right
-                };
-                Grid.SetRow(buttonPanel, 2);
-
-                var okButton = new Button
-                {
-                    Content = "Move",
-                    Width = 80,
-                    Margin = new Thickness(0, 0, 10, 0)
-                };
-                okButton.Click += (s, args) => { dialog.DialogResult = true; dialog.Close(); };
-
-                var cancelButton = new Button
-                {
-                    Content = "Cancel",
-                    Width = 80
-                };
-                cancelButton.Click += (s, args) => { dialog.DialogResult = false; dialog.Close(); };
-
-                buttonPanel.Children.Add(okButton);
-                buttonPanel.Children.Add(cancelButton);
-
-                grid.Children.Add(label);
-                grid.Children.Add(pathPanel);
-                grid.Children.Add(buttonPanel);
-                dialog.Content = grid;
-
-                if (dialog.ShowDialog() == true && !string.IsNullOrWhiteSpace(textBox.Text))
+                string? destPath = await ShowPathPickerDialogAsync("Move To", "Move", item.Name, _currentPS5Path + "/" + item.Name);
+                if (destPath != null)
                 {
                     try
                     {
-                        await _protocol.RenameAsync(item.FullPath, textBox.Text);
-                        Log($"✅ Moved {item.Name} to {textBox.Text}");
+                        await _protocol.RenameAsync(item.FullPath, destPath);
+                        Log($"✅ Moved {item.Name} to {destPath}");
                         await LoadPS5DirectoryAsync(_currentPS5Path);
                     }
                     catch (Exception ex)
@@ -2452,7 +2373,7 @@ namespace PS5Upload
                 "Complete", MessageBoxButton.OK, MessageBoxImage.Information);
         }
 
-        private string FormatFileSize(long bytes)
+        private static string FormatFileSize(long bytes)
         {
             string[] sizes = { "B", "KB", "MB", "GB", "TB" };
             double len = bytes;
@@ -2905,21 +2826,7 @@ namespace PS5Upload
         public bool IsDirectory { get; set; }
         public long Size { get; set; }
         public string? RemotePathOverride { get; set; }
-        public string SizeFormatted => FormatSize(Size);
-
-        private string FormatSize(long bytes)
-        {
-            if (IsDirectory) return "";
-            string[] sizes = { "B", "KB", "MB", "GB", "TB" };
-            double len = bytes;
-            int order = 0;
-            while (len >= 1024 && order < sizes.Length - 1)
-            {
-                order++;
-                len = len / 1024;
-            }
-            return $"{len:0.##} {sizes[order]}";
-        }
+        public string SizeFormatted => IsDirectory ? "" : FileUtils.FormatFileSize(Size);
     }
 
     public class PS5FileItem
@@ -2929,11 +2836,13 @@ namespace PS5Upload
         public string Icon { get; set; } = "";
         public bool IsDirectory { get; set; }
         public long Size { get; set; }
-        public string SizeFormatted => FormatSize(Size);
+        public string SizeFormatted => IsDirectory ? "" : FileUtils.FormatFileSize(Size);
+    }
 
-        private string FormatSize(long bytes)
+    public static class FileUtils
+    {
+        public static string FormatFileSize(long bytes)
         {
-            if (IsDirectory) return "";
             string[] sizes = { "B", "KB", "MB", "GB", "TB" };
             double len = bytes;
             int order = 0;
@@ -2959,7 +2868,7 @@ namespace PS5Upload
                     return;
                 }
                 
-                ShellLog("[Shell] Connecting to 192.168.0.160:9113...");
+                ShellLog($"[Shell] Connecting to {_ps5IpAddress}:9113...");
                 ShellLog("[Shell] Creating TCP connection...");
                 ShellLog("[Shell] TCP connected, getting stream...");
                 ShellLog("[Shell] Sending SHELL_OPEN command...");
@@ -2972,7 +2881,7 @@ namespace PS5Upload
                     ShellLog("[Shell] Connection successful, starting read loop...");
                     _shellActive = true;
                     _shellCurrentDir = "/data";
-                    ShellLog("✅ Connected to PS5 at 192.168.0.160");
+                    ShellLog($"✅ Connected to PS5 at {_ps5IpAddress}");
                     ShellLog($"PS5:{_shellCurrentDir} $");
                 }
                 else
@@ -3343,6 +3252,80 @@ namespace PS5Upload
                 Log($"❌ Payload send error: {ex.Message}");
                 MessageBox.Show($"Error sending payload: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
                 SendPayloadButton.IsEnabled = true;
+            }
+        }
+
+        private async void MountGamesButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (!_protocol.IsConnected)
+            {
+                MessageBox.Show("Not connected to PS5", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                return;
+            }
+
+            MountGamesButton.IsEnabled = false;
+            MountGamesButton.Content = "⏳ Mounting...";
+            Log("🎮 Mount Games: Starting...");
+            Log("Scanning /data/etaHEN/games, USB drives, M.2 SSD...");
+
+            try
+            {
+                string? result = await _protocol.MountGamesAsync();
+
+                if (result != null)
+                {
+                    Log("🎮 Mount Games Result:");
+                    foreach (var line in result.Split('\n'))
+                    {
+                        if (!string.IsNullOrWhiteSpace(line))
+                            Log($"  {line.Trim()}");
+                    }
+
+                    // Check if there were new mounts that need registration
+                    bool hasNewMounts = result.Contains("New mounts:") && !result.Contains("New mounts: 0");
+                    
+                    if (hasNewMounts)
+                    {
+                        Log("🎮 New games detected - running game_mounter.elf for registration...");
+                        MountGamesButton.Content = "⏳ Registering...";
+                        
+                        // Execute standalone game_mounter.elf for sceAppInstUtil registration
+                        try
+                        {
+                            var shellResult = await _protocol.ExecuteShellCommandAsync("exec /data/etaHEN/payloads/game_mounter.elf");
+                            if (shellResult != null)
+                            {
+                                Log("✅ Game registration completed via game_mounter.elf");
+                            }
+                            else
+                            {
+                                Log("⚠️ game_mounter.elf may not be available - games mounted but may need manual registration");
+                            }
+                        }
+                        catch
+                        {
+                            Log("⚠️ Could not run game_mounter.elf - games are mounted via nullfs but may not appear on home screen until game_mounter.elf is run");
+                        }
+                    }
+
+                    MessageBox.Show(result, "Mount Games - Result", MessageBoxButton.OK, MessageBoxImage.Information);
+                }
+                else
+                {
+                    Log("❌ Mount Games: No response from PS5 (timeout or connection lost)");
+                    MessageBox.Show("No response from PS5. The connection may have been lost.\n\nThe mount operation may still be running on the PS5.", 
+                                    "Mount Games - Error", MessageBoxButton.OK, MessageBoxImage.Warning);
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Mount Games error: {ex.Message}");
+                MessageBox.Show($"Error mounting games: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+            finally
+            {
+                MountGamesButton.Content = "🎮 Mount Games";
+                MountGamesButton.IsEnabled = _protocol.IsConnected;
             }
         }
 

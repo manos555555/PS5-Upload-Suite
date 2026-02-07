@@ -1128,10 +1128,12 @@
             </Grid>
         </Border>
 
-        <!-- Upload and Cancel Buttons -->
+        <!-- Upload, Mount and Cancel Buttons -->
         <Grid Grid.Row="5" Margin="0,10,0,0">
             <Grid.ColumnDefinitions>
                 <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="10"/>
+                <ColumnDefinition Width="Auto"/>
                 <ColumnDefinition Width="10"/>
                 <ColumnDefinition Width="Auto"/>
             </Grid.ColumnDefinitions>
@@ -1147,8 +1149,22 @@
                     Background="#007ACC"
                     IsEnabled="False"/>
 
-            <!-- Cancel Button -->
+            <!-- Mount Games Button -->
             <Button Grid.Column="2"
+                    x:Name="MountGamesButton"
+                    Content="🎮 Mount Games"
+                    Click="MountGamesButton_Click"
+                    Height="45"
+                    Width="160"
+                    FontSize="14"
+                    FontWeight="SemiBold"
+                    Background="#28A745"
+                    Foreground="White"
+                    IsEnabled="False"
+                    ToolTip="Mount all uploaded games on PS5 home screen (scans internal, USB, M.2)"/>
+
+            <!-- Cancel Button -->
+            <Button Grid.Column="4"
                     x:Name="CancelButton"
                     Content="❌ Cancel"
                     Click="CancelButton_Click"

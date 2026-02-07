@@ -2,16 +2,16 @@
 
 **By Manos**
 
-**Version 4.1.0 - Memory Optimization & Large File Handling**
+**Version 4.2.0 - Game Mounter Integration**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
 
-⭐ **NEW in v4.1.0:** 
-- 🧠 **Memory Optimization** - Handles 156K+ files without crashes
-- ⚡ **Reduced UI Stuttering** - Batch logging for smoother experience
-- 🔧 **Lock-Free Operations** - ConcurrentDictionary for thread-safety
-- 🧹 **Auto Memory Cleanup** - Completed files removed from tracking
-- � **Incremental Processing** - No massive dictionary allocations
+⭐ **NEW in v4.2.0:** 
+- 🎮 **Mount Games Button** - Mount uploaded games directly from the client
+- 🔍 **Multi-Path Scanning** - Scans internal storage, USB drives (0-3), and M.2 SSD
+- � **Duplicate Detection** - Skips already-mounted games automatically
+- 📊 **Mount Summary** - Detailed results with PS5 notifications
+- 🧹 **Auto-Cleanup** - Removes mount entries for deleted games
 
 📱 **Android Mobile Client available!**
 
@@ -107,6 +107,12 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
   - Working directory support
 ✅ **Favorites/Bookmarks** - Quick navigation to saved paths  
 ✅ **Multi-PS5 Support** - Save and switch between multiple PS5 profiles  
+✅ **🎮 Mount Games** - Mount uploaded games directly from the client (NEW v4.2)  
+  - Scans all game paths: internal, USB drives, M.2 SSD
+  - Duplicate detection across storage locations
+  - Auto-cleanup of deleted game mounts
+  - PS5 notifications with mount progress
+  - Automatic game registration via game_mounter.elf
 
 ---
 
@@ -167,6 +173,31 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 - Server only accepts connections from local network
 - No authentication required (local network only)
 - SHUTDOWN command only works from localhost
+
+---
+
+## 📝 What's New in v4.2.0
+
+### 🎮 Game Mounter Integration
+- **Mount Games Button** - New green "🎮 Mount Games" button in the client UI
+- **Multi-Path Scanning** - Scans 6 locations: `/data/etaHEN/games`, USB drives (0-3), M.2 SSD (`/mnt/ext0/games`)
+- **Duplicate Detection** - If the same game exists on multiple drives, it's mounted only once
+- **Auto-Cleanup** - Automatically unmounts entries for games that have been deleted
+- **PS5 Notifications** - Real-time progress notifications on PS5 screen during mounting
+- **Detailed Summary** - Shows new mounts, already mounted, duplicates skipped, and failures
+- **Auto Registration** - Automatically runs `game_mounter.elf` for home screen registration when new games are detected
+
+### 🔧 Payload Improvements
+- **New Protocol Command** - `CMD_MOUNT_GAMES` (0x30) for triggering game mount from client
+- **nullfs Mounting** - Games mounted via nullfs to `/system_ex/app/`
+- **DRM Patching** - Automatic DRM type fix in param.json
+- **sce_sys Copy** - Copies game metadata to `/user/app/` and `/user/appmeta/`
+- **mount.lnk Tracking** - Creates mount link files for persistent mount state
+
+### 🐛 Bug Fixes
+- **Fixed IOVEC_ENTRY(NULL) crash** - `strlen(NULL)` with `-O3` optimization caused payload crash
+- **Fixed libSceAppInstUtil crash** - Library not available in etaHEN payload context, switched to standalone registration
+- **Removed system() calls** - Replaced `system("rm -rf ...")` with safe recursive delete to prevent hangs
 
 ---
 
