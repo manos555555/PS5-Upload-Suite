@@ -2,14 +2,19 @@
 
 **By Manos**
 
-**Version 4.2.0 - Game Mounter Integration**
+**Version 4.2.1 - Bugfix Release**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
 
-⭐ **NEW in v4.2.0:** 
+⭐ **NEW in v4.2.1 (Bugfix):**
+- 🖥️ **Fixed UI scrolling** - Connection panel no longer eats half the screen
+- 🔢 **Fixed file counting** - Chunked files now count correctly as completed
+- 📊 **Fixed frozen progress** - Progress updates no longer freeze during heavy uploads
+
+⭐ **v4.2.0 Features:** 
 - 🎮 **Mount Games Button** - Mount uploaded games directly from the client
 - 🔍 **Multi-Path Scanning** - Scans internal storage, USB drives (0-3), and M.2 SSD
-- � **Duplicate Detection** - Skips already-mounted games automatically
+- 🔄 **Duplicate Detection** - Skips already-mounted games automatically
 - 📊 **Mount Summary** - Detailed results with PS5 notifications
 - 🧹 **Auto-Cleanup** - Removes mount entries for deleted games
 

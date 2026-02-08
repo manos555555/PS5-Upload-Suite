@@ -1,5 +1,27 @@
 # Changelog - PS5 Upload Suite
 
+## Version 4.2.1 - Bugfix Release (February 8, 2026)
+
+### 🐛 Bug Fixes
+
+#### UI Scrolling Fix
+- **Fixed connection panel eating screen space** - Added `MaxHeight` constraint (250px) and `ScrollViewer` to the connection/payload settings panel
+- **Fixed header overflow** - Added `MaxHeight="120"` to header row
+- **Fixed content area too small** - Added `MinHeight="200"` to main content area
+- When the Auto-send Payload Expander was open, it consumed half the screen leaving no room for file lists
+
+#### File Counting Fix
+- **Fixed chunked files never counting as completed** - `fileChunkCounts` was set to the actual number of chunks (e.g., 4 for a 2GB file), but `UploadFileParallelAsync` handles all chunks internally as a single Task. The main loop only saw 1 task completion per file, so chunked files never reached their completion threshold
+- Now correctly sets `fileChunkCounts = 1` per file since each file = 1 task
+
+#### Progress Display Fix
+- **Fixed progress appearing frozen during heavy uploads** - All UI updates used `DispatcherPriority.Background` (lowest priority), which got starved when 24 parallel connections flooded the dispatcher queue
+- Upgraded `UpdateUploadStats` to `DispatcherPriority.Normal`
+- Upgraded per-file progress bars to `DispatcherPriority.Render`
+- Progress now updates smoothly even at 95%+ network saturation
+
+---
+
 ## Version 4.2.0 - Game Mounter Integration (February 7, 2026)
 
 ### 🎮 Game Mounter Integration

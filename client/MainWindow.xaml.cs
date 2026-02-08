@@ -408,7 +408,7 @@ namespace PS5Upload
         private void UpdateUploadStats(int completedFiles, int activeTaskCount)
         {
             // CRITICAL FIX: Use InvokeAsync instead of Invoke to prevent UI freezing
-            // When uploading thousands of small files, Invoke blocks the UI thread
+            // Use Normal priority (not Background) so updates aren't starved during heavy uploads
             Dispatcher.InvokeAsync(() =>
             {
                 // Update files remaining counter
@@ -491,7 +491,7 @@ namespace PS5Upload
                 {
                     UploadFileNameText.Text = $"Uploading {activeTaskCount} files in parallel...";
                 }
-            }, System.Windows.Threading.DispatcherPriority.Background);
+            }, System.Windows.Threading.DispatcherPriority.Normal);
         }
 
         private void Log(string message)
@@ -1158,11 +1158,9 @@ namespace PS5Upload
                         taskIsLargeFile[task] = isLargeFile;
                         taskIsHugeFile[task] = isHugeFile;
 
-                        long chunkSizeForFile = fileSize >= HugeFileThresholdBytes ? HugeFileChunkSizeBytes : DefaultChunkSizeBytes;
-                        int chunkCount = fileSize > ChunkThresholdBytes
-                            ? (int)((fileSize + chunkSizeForFile - 1) / chunkSizeForFile)
-                            : 1;
-                        fileChunkCounts[localPath] = chunkCount;
+                        // Each file is ONE task (UploadFileParallelAsync handles chunks internally)
+                        // So chunkCount must always be 1 for the completion counter to work
+                        fileChunkCounts[localPath] = 1;
                         fileChunksCompleted[localPath] = 0;
                     }
 
@@ -1625,7 +1623,7 @@ namespace PS5Upload
                                 {
                                     UploadProgressBar.Value = filePercent;
                                     UploadProgressText.Text = $"{FormatFileSize(aggregateBytes)} / {FormatFileSize(fileInfo.Length)} ({filePercent:F1}%)";
-                                }, System.Windows.Threading.DispatcherPriority.Background);
+                                }, System.Windows.Threading.DispatcherPriority.Render);
 
                                 if (aggregateBytes == fileInfo.Length || aggregateBytes - previousLoggedBytes >= ChunkLogIntervalBytes)
                                 {
@@ -1686,7 +1684,7 @@ namespace PS5Upload
                                 {
                                     UploadProgressBar.Value = filePercent;
                                     UploadProgressText.Text = $"{FormatFileSize(p.BytesSent)} / {FormatFileSize(fileInfo.Length)} ({filePercent:F1}%)";
-                                }, System.Windows.Threading.DispatcherPriority.Background);
+                                }, System.Windows.Threading.DispatcherPriority.Render);
 
                                 if (p.BytesSent == p.TotalBytes || p.BytesSent - previousLoggedBytes >= SmallFileLogIntervalBytes)
                                 {

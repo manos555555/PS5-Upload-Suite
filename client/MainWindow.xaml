@@ -66,10 +66,10 @@
 
     <Grid Margin="20">
         <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" MaxHeight="120"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
+            <RowDefinition Height="*" MinHeight="200"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
@@ -119,7 +119,9 @@
                 BorderThickness="1" 
                 CornerRadius="4" 
                 Padding="15"
-                Margin="0,0,0,15">
+                Margin="0,0,0,15"
+                MaxHeight="250">
+            <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
             <Grid>
                 <Grid.RowDefinitions>
                     <RowDefinition Height="Auto"/>
@@ -323,6 +325,7 @@
                     </Expander>
                 </Grid>
             </Grid>
+            </ScrollViewer>
         </Border>
 
         <!-- Storage Info Panel -->
