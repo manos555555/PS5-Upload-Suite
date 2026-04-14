@@ -2,11 +2,19 @@
 
 **By Manos**
 
-**Version 4.2.1 - Bugfix Release**
+**Version 4.2.2 - Stability & Mount Fix Release**
 
 Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
 
-⭐ **NEW in v4.2.1 (Bugfix):**
+⭐ **NEW in v4.2.2 (Stability & Mount Fix):**
+- 🎮 **Fixed Mount Games** - Games now properly appear on PS5 home screen after mounting
+- 🗑️ **Fixed Unmount Games** - Games now properly removed from PS5 home screen when unmounted
+- 🖥️ **Fixed Hardware Tab** - Added ScrollViewer for proper scrolling
+- 🔧 **Fixed sceAppInstUtil calls** - Correct API usage with proper arguments
+- ⚠️ **Disabled auto hardware refresh** - Prevents payload crashes (manual refresh still available)
+- 🛡️ **Improved stability** - Fixed delayed payload crashes during folder navigation
+
+⭐ **v4.2.1 (Bugfix):**
 - 🖥️ **Fixed UI scrolling** - Connection panel no longer eats half the screen
 - 🔢 **Fixed file counting** - Chunked files now count correctly as completed
 - 📊 **Fixed frozen progress** - Progress updates no longer freeze during heavy uploads
