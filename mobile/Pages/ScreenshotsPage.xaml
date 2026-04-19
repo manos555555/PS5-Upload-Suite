@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="PS5UploadMobile.Pages.ScreenshotsPage"
+             BackgroundColor="#121212"
+             Title="Screenshots">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="10">
+        <HorizontalStackLayout Grid.Row="0" Spacing="8">
+            <Button Text="🔄 Refresh" Clicked="OnRefreshClicked" BackgroundColor="#0078D4" TextColor="White" FontSize="14"/>
+        </HorizontalStackLayout>
+
+        <Label Grid.Row="1" x:Name="StatusLabel" Text="Tap Refresh to load screenshots" 
+               TextColor="Gray" FontSize="12" Margin="4,6"/>
+
+        <RefreshView Grid.Row="2" x:Name="ShotsRefresh" Refreshing="OnRefreshing">
+            <CollectionView x:Name="ShotsListView" SelectionMode="Single"
+                            SelectionChanged="OnShotSelected">
+                <CollectionView.ItemsLayout>
+                    <GridItemsLayout Orientation="Vertical" Span="2" VerticalItemSpacing="6" HorizontalItemSpacing="6"/>
+                </CollectionView.ItemsLayout>
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Frame Padding="0" CornerRadius="8" IsClippedToBounds="True"
+                               BackgroundColor="#1E1E1E" HasShadow="False" BorderColor="#333">
+                            <Grid RowDefinitions="*,Auto">
+                                <Image Grid.Row="0" Source="{Binding Thumbnail}" Aspect="AspectFill" HeightRequest="130"
+                                       BackgroundColor="#2A2A2A"/>
+                                <VerticalStackLayout Grid.Row="1" Padding="6,4" Spacing="0">
+                                    <Label Text="{Binding FileName}" TextColor="White" FontSize="11"
+                                           LineBreakMode="TailTruncation"/>
+                                    <Label TextColor="Gray" FontSize="10">
+                                        <Label.FormattedText>
+                                            <FormattedString>
+                                                <Span Text="{Binding SizeDisplay}"/>
+                                                <Span Text=" • "/>
+                                                <Span Text="{Binding DateDisplay}"/>
+                                            </FormattedString>
+                                        </Label.FormattedText>
+                                    </Label>
+                                </VerticalStackLayout>
+                            </Grid>
+                        </Frame>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+                <CollectionView.EmptyView>
+                    <Label Text="No screenshots found. Pull to refresh." TextColor="Gray" 
+                           HorizontalOptions="Center" VerticalOptions="Center"/>
+                </CollectionView.EmptyView>
+            </CollectionView>
+        </RefreshView>
+    </Grid>
+</ContentPage>

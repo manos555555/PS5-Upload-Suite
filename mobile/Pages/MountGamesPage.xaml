@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="PS5UploadMobile.Pages.MountGamesPage"
+             BackgroundColor="#121212"
+             Title="Mount Games">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="14">
+
+        <Frame Grid.Row="0" BackgroundColor="#1E1E1E" BorderColor="#2D2D2D" Padding="14" CornerRadius="8" HasShadow="False">
+            <VerticalStackLayout Spacing="6">
+                <Label Text="🎮 Mount Games" TextColor="#80B0FF" FontSize="18" FontAttributes="Bold"/>
+                <Label Text="Scan all known locations (internal, USB 0–3, M.2 SSD) and automatically mount any unmounted games onto the PS5 home screen." 
+                       TextColor="LightGray" FontSize="12"/>
+            </VerticalStackLayout>
+        </Frame>
+
+        <Button Grid.Row="1" x:Name="StartBtn" Text="🚀 Start Mount Scan" 
+                Clicked="OnStartClicked" BackgroundColor="#107C10" TextColor="White"
+                FontAttributes="Bold" HeightRequest="55" Margin="0,12,0,12"/>
+
+        <Border Grid.Row="2" Stroke="#333" StrokeThickness="1" Background="#000" Padding="8">
+            <ScrollView x:Name="LogScroll">
+                <Label x:Name="LogLabel" Text="Ready. Tap 'Start Mount Scan' to begin." 
+                       TextColor="#00FF40" FontFamily="Monospace" FontSize="12"/>
+            </ScrollView>
+        </Border>
+    </Grid>
+</ContentPage>

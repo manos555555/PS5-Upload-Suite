@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="PS5UploadMobile.Pages.ShellPage"
+             BackgroundColor="#121212"
+             Title="Shell">
+    <Grid RowDefinitions="Auto,*,Auto" Padding="10">
+
+        <HorizontalStackLayout Grid.Row="0" Spacing="8" Margin="0,0,0,6">
+            <Button Text="🔗 Open Shell" Clicked="OnOpenClicked" BackgroundColor="#107C10" TextColor="White" FontSize="13"/>
+            <Button Text="❌ Close" Clicked="OnCloseClicked" BackgroundColor="#D13438" TextColor="White" FontSize="13"/>
+            <Button Text="🧹 Clear" Clicked="OnClearClicked" BackgroundColor="#3E3E3E" TextColor="White" FontSize="13"/>
+        </HorizontalStackLayout>
+
+        <Border Grid.Row="1" Stroke="#333" StrokeThickness="1" Background="#000" Padding="8">
+            <ScrollView x:Name="OutputScroll">
+                <Label x:Name="OutputLabel" Text="Shell output will appear here…"
+                       TextColor="#00FF40" FontFamily="Monospace" FontSize="12"/>
+            </ScrollView>
+        </Border>
+
+        <Grid Grid.Row="2" ColumnDefinitions="*,Auto" ColumnSpacing="6" Margin="0,6,0,0">
+            <Entry x:Name="CmdEntry" Placeholder="Enter shell command…" 
+                   Text="ls /" TextColor="White" PlaceholderColor="Gray"
+                   Completed="OnCmdCompleted"/>
+            <Button Grid.Column="1" Text="▶ Run" Clicked="OnRunClicked" 
+                    BackgroundColor="#0078D4" TextColor="White"/>
+        </Grid>
+    </Grid>
+</ContentPage>

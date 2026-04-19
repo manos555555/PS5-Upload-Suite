@@ -310,6 +310,11 @@ public partial class MainPage : ContentPage
         AddLog($"Connecting to {IpEntry.Text}:{PortEntry.Text}...");
         bool connected = await _uploadService.ConnectAsync();
 
+        // Also establish shared protocol connection for other tabs (Games, Saves, Screenshots, Hardware, Shell, Mount)
+        int portNum = int.TryParse(PortEntry.Text, out var p) ? p : 9113;
+        bool sharedOk = await ConnectionManager.Instance.ConnectAsync(IpEntry.Text, portNum);
+        AddLog(sharedOk ? "Shared protocol connected (all tabs ready)" : "Shared protocol connection failed — other tabs may not work");
+
         if (connected)
         {
             StatusLabel.Text = "Connected ✓";
@@ -332,6 +337,7 @@ public partial class MainPage : ContentPage
     private async void OnDisconnectClicked(object sender, EventArgs e)
     {
         await _uploadService.DisconnectAsync();
+        ConnectionManager.Instance.Disconnect();
         
         StatusLabel.Text = "Disconnected";
         StatusLabel.TextColor = Colors.Orange;

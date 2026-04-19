@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="PS5UploadMobile.Pages.GamesPage"
+             BackgroundColor="#121212"
+             Title="Games">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="10">
+
+        <!-- Toolbar -->
+        <HorizontalStackLayout Grid.Row="0" Spacing="8">
+            <Button Text="🔄 Refresh" Clicked="OnRefreshClicked" BackgroundColor="#0078D4" TextColor="White" FontSize="14"/>
+            <Button Text="🎮 Mount All" Clicked="OnMountAllClicked" BackgroundColor="#107C10" TextColor="White" FontSize="14"/>
+        </HorizontalStackLayout>
+
+        <!-- Status Label -->
+        <Label Grid.Row="1" x:Name="StatusLabel" Text="Tap Refresh to load games" 
+               TextColor="Gray" FontSize="12" Margin="4,6"/>
+
+        <!-- Games List -->
+        <RefreshView Grid.Row="2" x:Name="GamesRefresh" Refreshing="OnRefreshing">
+            <CollectionView x:Name="GamesListView" SelectionMode="Single"
+                            SelectionChanged="OnGameSelected">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="10,8" ColumnDefinitions="80,*,Auto" ColumnSpacing="10" BackgroundColor="#1E1E1E" Margin="0,0,0,4">
+                            <!-- Icon -->
+                            <Frame Grid.Column="0" Padding="0" CornerRadius="6" IsClippedToBounds="True"
+                                   BackgroundColor="#333" WidthRequest="80" HeightRequest="80" HasShadow="False">
+                                <Image Source="{Binding Icon}" Aspect="AspectFill" WidthRequest="80" HeightRequest="80"/>
+                            </Frame>
+                            <!-- Info -->
+                            <VerticalStackLayout Grid.Column="1" VerticalOptions="Center" Spacing="2">
+                                <Label Text="{Binding Name}" TextColor="White" FontSize="16" FontAttributes="Bold" LineBreakMode="TailTruncation"/>
+                                <Label Text="{Binding TitleId}" TextColor="#80B0FF" FontSize="12"/>
+                                <Label Text="{Binding SizeDisplay}" TextColor="Gray" FontSize="12"/>
+                                <Label Text="{Binding Region}" TextColor="Gray" FontSize="11"/>
+                            </VerticalStackLayout>
+                            <!-- Status -->
+                            <Label Grid.Column="2" Text="{Binding StatusDisplay}" TextColor="LimeGreen" FontSize="11" VerticalOptions="Center"/>
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+                <CollectionView.EmptyView>
+                    <Label Text="No games found. Pull to refresh." TextColor="Gray" HorizontalOptions="Center" VerticalOptions="Center"/>
+                </CollectionView.EmptyView>
+            </CollectionView>
+        </RefreshView>
+    </Grid>
+</ContentPage>

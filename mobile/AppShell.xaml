@@ -4,11 +4,94 @@
     xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
     xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
     xmlns:local="clr-namespace:PS5UploadMobile"
-    Shell.FlyoutBehavior="Disabled">
+    xmlns:pages="clr-namespace:PS5UploadMobile.Pages"
+    Shell.FlyoutBehavior="Flyout"
+    Shell.BackgroundColor="#1E1E1E"
+    Shell.ForegroundColor="White"
+    Shell.TitleColor="White"
+    Shell.FlyoutBackgroundColor="#FFFFFF"
+    Title="PS5 Upload Suite">
 
-    <ShellContent
-        Title="Home"
-        ContentTemplate="{DataTemplate local:MainPage}"
-        Route="MainPage" />
+    <Shell.Resources>
+        <ResourceDictionary>
+            <!-- Flyout item styling: light background, dark text for maximum readability -->
+            <Style x:Key="FlyoutItemLabelStyle" TargetType="Label">
+                <Setter Property="TextColor" Value="#1E1E1E" />
+                <Setter Property="FontSize" Value="16" />
+                <Setter Property="VerticalOptions" Value="Center" />
+            </Style>
+
+            <!-- Flyout item template: explicit colors for text + selected background -->
+            <DataTemplate x:Key="FlyoutItemTemplate">
+                <Grid HeightRequest="54" Padding="16,0" ColumnDefinitions="Auto,*">
+                    <VisualStateManager.VisualStateGroups>
+                        <VisualStateGroup Name="CommonStates">
+                            <VisualState Name="Normal">
+                                <VisualState.Setters>
+                                    <Setter TargetName="FlyoutRoot" Property="Grid.BackgroundColor" Value="#FFFFFF" />
+                                    <Setter TargetName="FlyoutText" Property="Label.TextColor" Value="#1E1E1E" />
+                                </VisualState.Setters>
+                            </VisualState>
+                            <VisualState Name="Selected">
+                                <VisualState.Setters>
+                                    <Setter TargetName="FlyoutRoot" Property="Grid.BackgroundColor" Value="#E3F2FD" />
+                                    <Setter TargetName="FlyoutText" Property="Label.TextColor" Value="#0078D4" />
+                                </VisualState.Setters>
+                            </VisualState>
+                        </VisualStateGroup>
+                    </VisualStateManager.VisualStateGroups>
+                    <Grid x:Name="FlyoutRoot" Grid.ColumnSpan="2" BackgroundColor="#FFFFFF" />
+                    <Image Grid.Column="0" Source="{Binding FlyoutIcon}" Margin="0,0,12,0"
+                           VerticalOptions="Center" HeightRequest="22" WidthRequest="22"/>
+                    <Label x:Name="FlyoutText" Grid.Column="1" Text="{Binding Title}"
+                           FontSize="16" FontAttributes="Bold"
+                           TextColor="#1E1E1E"
+                           VerticalOptions="Center" />
+                </Grid>
+            </DataTemplate>
+
+            <!-- Apply to all FlyoutItems -->
+            <Style TargetType="FlyoutItem">
+                <Setter Property="Shell.ItemTemplate" Value="{StaticResource FlyoutItemTemplate}" />
+            </Style>
+        </ResourceDictionary>
+    </Shell.Resources>
+
+    <Shell.FlyoutHeader>
+        <Grid HeightRequest="130" BackgroundColor="#0078D4">
+            <VerticalStackLayout VerticalOptions="Center" HorizontalOptions="Center" Spacing="4">
+                <Label Text="🎮 PS5 Upload Suite" FontSize="22" FontAttributes="Bold" TextColor="White" HorizontalOptions="Center"/>
+                <Label Text="Complete Management" FontSize="13" TextColor="White" Opacity="0.9" HorizontalOptions="Center"/>
+            </VerticalStackLayout>
+        </Grid>
+    </Shell.FlyoutHeader>
+
+    <FlyoutItem Title="Files" Icon="{OnPlatform Default='folder.png'}">
+        <ShellContent ContentTemplate="{DataTemplate local:MainPage}" Route="files" />
+    </FlyoutItem>
+
+    <FlyoutItem Title="Games">
+        <ShellContent ContentTemplate="{DataTemplate pages:GamesPage}" Route="games" />
+    </FlyoutItem>
+
+    <FlyoutItem Title="Saves">
+        <ShellContent ContentTemplate="{DataTemplate pages:SavesPage}" Route="saves" />
+    </FlyoutItem>
+
+    <FlyoutItem Title="Screenshots">
+        <ShellContent ContentTemplate="{DataTemplate pages:ScreenshotsPage}" Route="screenshots" />
+    </FlyoutItem>
+
+    <FlyoutItem Title="Hardware">
+        <ShellContent ContentTemplate="{DataTemplate pages:HardwarePage}" Route="hardware" />
+    </FlyoutItem>
+
+    <FlyoutItem Title="Shell">
+        <ShellContent ContentTemplate="{DataTemplate pages:ShellPage}" Route="shell" />
+    </FlyoutItem>
+
+    <FlyoutItem Title="Mount Games">
+        <ShellContent ContentTemplate="{DataTemplate pages:MountGamesPage}" Route="mount" />
+    </FlyoutItem>
 
 </Shell>

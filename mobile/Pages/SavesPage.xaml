@@ -1,0 +1,52 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="PS5UploadMobile.Pages.SavesPage"
+             BackgroundColor="#121212"
+             Title="Saves">
+    <Grid RowDefinitions="Auto,Auto,*" Padding="10">
+        <HorizontalStackLayout Grid.Row="0" Spacing="8">
+            <Button Text="🔄 Refresh" Clicked="OnRefreshClicked" BackgroundColor="#0078D4" TextColor="White" FontSize="14"/>
+        </HorizontalStackLayout>
+
+        <Label Grid.Row="1" x:Name="StatusLabel" Text="Tap Refresh to load save files" 
+               TextColor="Gray" FontSize="12" Margin="4,6"/>
+
+        <RefreshView Grid.Row="2" x:Name="SavesRefresh" Refreshing="OnRefreshing">
+            <CollectionView x:Name="SavesListView" SelectionMode="Single"
+                            SelectionChanged="OnSaveSelected">
+                <CollectionView.ItemTemplate>
+                    <DataTemplate>
+                        <Grid Padding="10,8" ColumnDefinitions="60,*,Auto" ColumnSpacing="10" 
+                              BackgroundColor="#1E1E1E" Margin="0,0,0,4">
+                            <Frame Grid.Column="0" Padding="0" CornerRadius="6" IsClippedToBounds="True"
+                                   BackgroundColor="#333" WidthRequest="60" HeightRequest="60" HasShadow="False">
+                                <Image Source="{Binding Icon}" Aspect="AspectFill"/>
+                            </Frame>
+                            <VerticalStackLayout Grid.Column="1" VerticalOptions="Center" Spacing="2">
+                                <Label Text="{Binding GameName}" TextColor="White" FontSize="15" FontAttributes="Bold"
+                                       LineBreakMode="TailTruncation"/>
+                                <Label Text="{Binding TitleId}" TextColor="#80B0FF" FontSize="11"/>
+                                <Label TextColor="Gray" FontSize="10">
+                                    <Label.FormattedText>
+                                        <FormattedString>
+                                            <Span Text="User: "/>
+                                            <Span Text="{Binding ShortUserId}"/>
+                                            <Span Text=" • "/>
+                                            <Span Text="{Binding ModifiedDisplay}"/>
+                                        </FormattedString>
+                                    </Label.FormattedText>
+                                </Label>
+                            </VerticalStackLayout>
+                            <Label Grid.Column="2" Text="{Binding SizeDisplay}" TextColor="Orange" FontSize="12"
+                                   VerticalOptions="Center"/>
+                        </Grid>
+                    </DataTemplate>
+                </CollectionView.ItemTemplate>
+                <CollectionView.EmptyView>
+                    <Label Text="No saves found." TextColor="Gray" HorizontalOptions="Center" VerticalOptions="Center"/>
+                </CollectionView.EmptyView>
+            </CollectionView>
+        </RefreshView>
+    </Grid>
+</ContentPage>

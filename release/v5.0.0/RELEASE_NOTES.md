@@ -8,10 +8,13 @@ Complete all-in-one PS5 management platform — **104+ MB/s** file transfers, li
 
 | File | Size | Purpose |
 |------|------|---------|
-| `PS5Upload.exe` | 146 MB | Windows GUI client (self-contained, no .NET install required) |
+| `PS5Upload.exe` | 147 MB | Windows GUI client (self-contained, no .NET install required) |
+| `PS5UploadMobile.apk` | 30 MB | **NEW:** Android client with full feature parity (8+ tabs) |
 | `ps5_upload_server.elf` | 187 KB | PS5 payload — load via elfldr, listens on port 9113 |
 
 **Load the payload on your PS5:** copy `ps5_upload_server.elf` to `/data/etaHEN/payloads/` and run it. You will see a notification `PS5 Upload Server: 192.168.0.XXX:9113 - By Manos` confirming it's ready.
+
+**Install the Android app:** download `PS5UploadMobile.apk` and install it on your Android device (enable "Install from unknown sources").
 
 ---
 
@@ -113,7 +116,41 @@ Complete all-in-one PS5 management platform — **104+ MB/s** file transfers, li
 
 ---
 
-## 🚀 Quick Start
+---
+
+## 📱 NEW: Android Mobile Client — Full Feature Parity
+
+The Android app (`PS5UploadMobile.apk`) now has **every feature** of the desktop client, organized via a **hamburger flyout menu (☰)** with a clean light theme for maximum readability:
+
+### 7 Fully-Functional Tabs
+- 📂 **Files** — Browse, upload, download, delete, rename, copy/move with drag-friendly UI
+- 🎮 **Games** — Mounted games list with cover icons, **Launch Game**, Unmount, Game Details
+- 💾 **Saves** — Per-game save browsing with icons, metadata, user IDs
+- 📷 **Screenshots** — 2-column gallery with live thumbnails, batch download, clean delete
+- 🖥️ **Hardware** — System Info + Live Sensors (CPU/SoC temps, freq, power) + Power Stats + auto-refresh
+- 💻 **Shell** — Terminal-style remote command execution with auto-scroll
+- 🎮 **Mount Games** — Dedicated page for multi-path scan with streaming progress log
+
+### Mobile-Specific Features
+- ✅ **Shared connection** — Connect once in Files tab, all other tabs use it automatically
+- ✅ **Thumbnail caching** — Local cache in app cache directory, zero re-downloads
+- ✅ **Pull-to-refresh** on games, saves, screenshots
+- ✅ **Light flyout menu** — white background, dark text, blue accent on selected item
+- ✅ **Dark content pages** — modern readable UI throughout
+- ✅ **Interlocked guards** — prevents overlapping refreshes on Hardware tab
+- ✅ **Auto-stop timers** — auto-refresh stops on disconnect
+- ✅ **0 warnings, 0 errors** build
+
+### Mobile Quick Start
+1. Enable **"Install from unknown sources"** in Android settings
+2. Download and install `PS5UploadMobile.apk`
+3. Load the PS5 payload (`ps5_upload_server.elf`)
+4. Open the app, enter your PS5 IP, tap **Connect**
+5. Open the **☰ menu** to access all 7 tabs
+
+---
+
+## 🚀 Quick Start (Desktop)
 
 1. **Load payload on PS5:** Copy `ps5_upload_server.elf` to `/data/etaHEN/payloads/` and execute it
 2. **Run client on PC:** Launch `PS5Upload.exe` on Windows

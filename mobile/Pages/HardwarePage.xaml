@@ -1,0 +1,102 @@
+<?xml version="1.0" encoding="utf-8" ?>
+<ContentPage xmlns="http://schemas.microsoft.com/dotnet/2021/maui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2009/xaml"
+             x:Class="PS5UploadMobile.Pages.HardwarePage"
+             BackgroundColor="#121212"
+             Title="Hardware">
+    <ScrollView>
+        <VerticalStackLayout Padding="12" Spacing="14">
+
+            <!-- Toolbar -->
+            <HorizontalStackLayout Spacing="10">
+                <Button Text="🔄 Refresh" Clicked="OnRefreshClicked" BackgroundColor="#0078D4" TextColor="White"/>
+                <HorizontalStackLayout Spacing="6" VerticalOptions="Center">
+                    <CheckBox x:Name="AutoRefreshCheck" Color="#0078D4" CheckedChanged="OnAutoRefreshChanged"/>
+                    <Label Text="Auto-refresh (5s)" TextColor="White" VerticalOptions="Center"/>
+                </HorizontalStackLayout>
+            </HorizontalStackLayout>
+
+            <Label x:Name="StatusLabel" Text="Tap Refresh to load hardware info" TextColor="Gray" FontSize="12"/>
+
+            <!-- System Info -->
+            <Frame BackgroundColor="#1E1E1E" BorderColor="#2D2D2D" Padding="14" CornerRadius="8" HasShadow="False">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="🖥️ System Info" TextColor="#80B0FF" FontSize="16" FontAttributes="Bold"/>
+                    <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto,Auto,Auto,Auto,Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+                        <Label Grid.Row="0" Grid.Column="0" Text="Model" TextColor="Gray"/>
+                        <Label Grid.Row="0" Grid.Column="1" x:Name="ModelLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="1" Grid.Column="0" Text="Serial" TextColor="Gray"/>
+                        <Label Grid.Row="1" Grid.Column="1" x:Name="SerialLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="2" Grid.Column="0" Text="Machine" TextColor="Gray"/>
+                        <Label Grid.Row="2" Grid.Column="1" x:Name="MachineLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="3" Grid.Column="0" Text="OS" TextColor="Gray"/>
+                        <Label Grid.Row="3" Grid.Column="1" x:Name="OsLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="4" Grid.Column="0" Text="CPU Cores" TextColor="Gray"/>
+                        <Label Grid.Row="4" Grid.Column="1" x:Name="CpuCoresLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="5" Grid.Column="0" Text="Physical RAM" TextColor="Gray"/>
+                        <Label Grid.Row="5" Grid.Column="1" x:Name="RamLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="6" Grid.Column="0" Text="Wi-Fi / BT" TextColor="Gray"/>
+                        <Label Grid.Row="6" Grid.Column="1" x:Name="WlanLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="7" Grid.Column="0" Text="Optical Out" TextColor="Gray"/>
+                        <Label Grid.Row="7" Grid.Column="1" x:Name="OpticalLabel" Text="—" TextColor="White"/>
+                    </Grid>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Live Sensors -->
+            <Frame BackgroundColor="#1E1E1E" BorderColor="#2D2D2D" Padding="14" CornerRadius="8" HasShadow="False">
+                <VerticalStackLayout Spacing="12">
+                    <Label Text="🔥 Live Sensors" TextColor="#FF9050" FontSize="16" FontAttributes="Bold"/>
+
+                    <VerticalStackLayout Spacing="4">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="CPU Temperature" TextColor="White"/>
+                            <Label Grid.Column="1" x:Name="CpuTempLabel" Text="—" TextColor="Orange" FontAttributes="Bold"/>
+                        </Grid>
+                        <ProgressBar x:Name="CpuTempBar" Progress="0" ProgressColor="#FF9050"/>
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout Spacing="4">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="SoC Temperature" TextColor="White"/>
+                            <Label Grid.Column="1" x:Name="SocTempLabel" Text="—" TextColor="Orange" FontAttributes="Bold"/>
+                        </Grid>
+                        <ProgressBar x:Name="SocTempBar" Progress="0" ProgressColor="#FF5050"/>
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout Spacing="4">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="CPU Frequency" TextColor="White"/>
+                            <Label Grid.Column="1" x:Name="CpuFreqLabel" Text="—" TextColor="LimeGreen" FontAttributes="Bold"/>
+                        </Grid>
+                        <ProgressBar x:Name="CpuFreqBar" Progress="0" ProgressColor="LimeGreen"/>
+                    </VerticalStackLayout>
+
+                    <VerticalStackLayout Spacing="4">
+                        <Grid ColumnDefinitions="*,Auto">
+                            <Label Text="SoC Power" TextColor="White"/>
+                            <Label Grid.Column="1" x:Name="SocPowerLabel" Text="—" TextColor="Yellow" FontAttributes="Bold"/>
+                        </Grid>
+                        <ProgressBar x:Name="SocPowerBar" Progress="0" ProgressColor="Yellow"/>
+                    </VerticalStackLayout>
+                </VerticalStackLayout>
+            </Frame>
+
+            <!-- Power Info -->
+            <Frame BackgroundColor="#1E1E1E" BorderColor="#2D2D2D" Padding="14" CornerRadius="8" HasShadow="False">
+                <VerticalStackLayout Spacing="8">
+                    <Label Text="⚡ Power Stats" TextColor="#FFD050" FontSize="16" FontAttributes="Bold"/>
+                    <Grid ColumnDefinitions="140,*" RowDefinitions="Auto,Auto,Auto" ColumnSpacing="10" RowSpacing="6">
+                        <Label Grid.Row="0" Grid.Column="0" Text="Operating Time" TextColor="Gray"/>
+                        <Label Grid.Row="0" Grid.Column="1" x:Name="OpTimeLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="1" Grid.Column="0" Text="Boot Count" TextColor="Gray"/>
+                        <Label Grid.Row="1" Grid.Column="1" x:Name="BootCountLabel" Text="—" TextColor="White"/>
+                        <Label Grid.Row="2" Grid.Column="0" Text="Total Power" TextColor="Gray"/>
+                        <Label Grid.Row="2" Grid.Column="1" x:Name="PowerConsLabel" Text="—" TextColor="White"/>
+                    </Grid>
+                </VerticalStackLayout>
+            </Frame>
+
+        </VerticalStackLayout>
+    </ScrollView>
+</ContentPage>

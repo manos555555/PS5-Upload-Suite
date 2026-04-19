@@ -1,3 +1,4 @@
+#nullable enable
 using System;
 using System.Buffers;
 using System.IO;
@@ -28,10 +29,29 @@ namespace PS5Upload
         ShellExec = 0x21,
         ShellInterrupt = 0x22,
         ShellClose = 0x23,
+        MountGames = 0x30,
+        GetFileInfo = 0x31,
+        GetSystemInfo = 0x32,
+        VerifyFile = 0x33,
+        GetHwInfo = 0x34,
+        GetTemps = 0x35,
+        GetRunningApps = 0x36,
+        KillApp = 0x37,
+        LaunchBrowser = 0x38,
+        GetPowerInfo = 0x39,
+        GetGameList = 0x3A,
+        UnmountGame = 0x3B,
+        GetGameIcon = 0x3C,
+        GetGameDetails = 0x3D,
+        GetGamePic = 0x3E,
+        ListSaves = 0x3F,
         IndexStart = 0x40,
         IndexStatus = 0x41,
         SearchIndex = 0x42,
         IndexCancel = 0x43,
+        LaunchGame = 0x44,
+        ListScreenshots = 0x45,
+        DeleteScreenshot = 0x46,
         Shutdown = 0xFF
     }
 
@@ -45,11 +65,26 @@ namespace PS5Upload
         Progress = 0x05
     }
 
-    public class PS5Protocol : IDisposable
+    public partial class PS5Protocol : IDisposable
     {
         private TcpClient? _client;
         private NetworkStream? _stream;
+        private readonly SemaphoreSlim _commandLock = new SemaphoreSlim(1, 1);
         private const int BufferSize = 4 * 1024 * 1024; // 4MB buffer - maximum throughput for chunk uploads
+
+        // Expose helpers for partial methods in ProtocolExtras.cs
+        internal Task SendCommandInternalAsync(Command cmd, byte[]? data = null) => SendCommandAsync(cmd, data);
+        internal Task<(Response response, byte[] data)> ReceiveResponseInternalAsync() => ReceiveResponseAsync();
+        internal async Task<(Response response, byte[] data)> RunCommandAsync(Command cmd, byte[]? data = null)
+        {
+            await _commandLock.WaitAsync();
+            try
+            {
+                await SendCommandAsync(cmd, data);
+                return await ReceiveResponseAsync();
+            }
+            finally { _commandLock.Release(); }
+        }
 
         public bool IsConnected => _client?.Connected ?? false;
 

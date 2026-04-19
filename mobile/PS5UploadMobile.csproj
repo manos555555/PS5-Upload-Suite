@@ -23,6 +23,11 @@
 		
 		<!-- Android specific -->
 		<AndroidManifest>Platforms\Android\AndroidManifest.xml</AndroidManifest>
+
+		<!-- Suppress NETSDK1202 (EOL workload warning for .NET 6 Android) -->
+		<CheckEolTargetFramework>false</CheckEolTargetFramework>
+		<SuppressTfmSupportBuildWarnings>true</SuppressTfmSupportBuildWarnings>
+		<NoWarn>$(NoWarn);NETSDK1202</NoWarn>
 	</PropertyGroup>
 	
 	<ItemGroup Condition="$(TargetFramework.StartsWith('net6.0-android'))">
