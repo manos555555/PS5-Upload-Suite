@@ -1,12 +1,75 @@
-# 🚀 PS5 Upload Suite - High-Speed File Transfer
+# 🚀 PS5 Upload Suite - Complete PS5 Management Platform
 
 **By Manos**
 
-**Version 4.2.2 - Stability & Mount Fix Release**
+**Version 5.0.0 - Complete Management Suite**
 
-Custom high-speed file transfer system for PS5 with etaHEN. Achieves **104+ MB/s** upload speeds for large files using parallel chunked uploads!
+Complete all-in-one PS5 management platform with **104+ MB/s** high-speed file transfers, live hardware monitoring, full game/save/screenshot management, and deep PS5 integration — all through a modern desktop client and a robust PS5 payload.
 
-⭐ **NEW in v4.2.2 (Stability & Mount Fix):**
+---
+
+⭐ **NEW in v5.0.0 (Complete Management Suite):**
+
+### 🖥️ **NEW: Hardware Monitor Tab**
+- 📋 **System Info** — Model (CFI-xxxx), Serial Number, Architecture, OS version
+- 💾 **Physical RAM** — With 5-step detection fallback (PS5-specific API + sysctl chain + 16 GB default)
+- 🔥 **Live Sensors** — CPU temperature, SoC temperature, CPU frequency, SoC power consumption
+- 🔄 **Auto-refresh** — Configurable 5-second polling with automatic disconnect detection
+- 🛡️ **Payload Hardened** — Mutex + 1s cache for sensors, 5s throttle for power API, rejection of abnormal readings
+
+### 📷 **NEW: Screenshots Tab**
+- 🖼️ **Visual Gallery** — Live thumbnail previews (200px downsampled for fast loading)
+- 💾 **Smart Cache** — Local cache in `%TEMP%` keyed by remote path hash — zero re-downloads on refresh
+- ⬇️ **Batch Download** — Multi-select and download multiple screenshots
+- 🗑️ **Clean Delete** — Removes ALL 3 files per screenshot (`.dat`, `.meta`, `.jpg.jpeg`) — no more ghost entries in PS5 gallery
+- 👁️ **Double-click Preview** — Opens in default image viewer
+- 🔍 **Full Path Scanning** — 5-level recursive scan of `/user/av_contents/thumbnails/photo/…`
+
+### ▶️ **NEW: Launch Game**
+- Right-click any mounted game → **Launch Game**
+- Uses `sceLncUtilLaunchApp` (low-level) with fallback to `sceSystemServiceLaunchApp`
+- Works on mounted/sideloaded games (bypasses `0x80940005` permission error)
+- Triple-strategy launcher with detailed diagnostic error messages
+
+### 💾 **NEW: Save Manager Tab**
+- **Full Save Browsing** — Per-game save data with metadata
+- **Game Icons** — Fetched from PSN/local param.sfo (cached)
+- **Download Saves** — Batch-download multiple saves to local folder
+- **Upload Saves** — Drag & drop save files back to PS5
+- **Save Details** — Size, modification time, title ID, path
+
+### 🎮 **NEW: Game Details Window**
+- **PSN Cover Art** — Official game covers fetched from PlayStation Store
+- **Full Metadata** — param.json contents formatted nicely
+- **Online PSN Info** — Description, genres, age rating, publisher
+- **Alternate Title ID detection** — Auto-fallback for regional variants
+- **Browser Search Fallback** — Opens PSN store search if API fails
+
+### 🔧 **Improved Storage Reporting**
+- ✅ Matches **PS5 Settings "Console Storage"** formula exactly
+- ✅ Total: `/user` effective + `/system_data` + `/system_ex`
+- ✅ Free: proper `f_bavail` across all partitions
+- ✅ Accounts for reserved space & per-partition blocksize
+- Example real-world PS5: **848 GB total / 354 GB free** ✓
+
+### 🎮 **Improved Mount Games**
+- ✅ Correct `sceAppInstUtilAppInstallTitleDir(title_id, "/user/app/", 0)` signature
+- ✅ Registration BEFORE `mount.lnk` (correct order)
+- ✅ Direct in-payload registration (no external `game_mounter.elf` dependency)
+- ✅ Proper DRM patching & metadata copy
+
+### 🛡️ **Stability Overhaul**
+- ✅ **Thread-safe sensor reads** — `pthread_mutex_t` prevents concurrent API crashes
+- ✅ **API call throttling** — SoC power read at most every 5s, sensor cache every 1s
+- ✅ **Cached static HW info** — Read once, serve forever (Model, Serial, OS)
+- ✅ **Unsafe APIs removed** — `sceKernelIccGet*`, `HwHasWlanBt`, `HwHasOpticalOut` (caused crashes)
+- ✅ **Client busy-flag guard** — `Interlocked` prevents overlapping refreshes
+- ✅ **Auto-stop timers** — Hardware auto-refresh stops on disconnect
+- ✅ **Graceful reconnect** — Connection lost → automatic reconnection attempt
+
+---
+
+⭐ **v4.2.2 (Stability & Mount Fix):**
 - 🎮 **Fixed Mount Games** - Games now properly appear on PS5 home screen after mounting
 - 🗑️ **Fixed Unmount Games** - Games now properly removed from PS5 home screen when unmounted
 - 🖥️ **Fixed Hardware Tab** - Added ScrollViewer for proper scrolling
@@ -46,13 +109,18 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 
 ### 2. Windows GUI Client
 - **File:** `PS5Upload.exe`
-- Self-contained executable (no .NET installation required)
-- Modern dark theme UI
+- Self-contained executable (no .NET installation required, **~147 MB**)
+- Modern dark theme UI with multi-tab layout
+- **Tabs:** Debug Log, Transfer History, Shell, Search, Saves, Games, Screenshots, **Hardware 🆕**
 - Drag & drop file/folder upload
 - Real-time upload progress with sliding window speed tracking
 - Transfer History with success/failed tracking and retry
-- PS5 storage display (free/used/total)
+- PS5 storage display (free/used/total — matches PS5 Settings)
 - Game mounting with one-click Mount Games button
+- **NEW:** Launch any mounted game with one click
+- **NEW:** Live hardware monitor (CPU/SoC temps, frequency, power)
+- **NEW:** Screenshot gallery with thumbnail previews and batch download/delete
+- **NEW:** Save Manager with game icons and PSN metadata
 
 ### 3. 📱 Android Mobile Client
 - **File:** `PS5UploadMobile.apk`
@@ -98,13 +166,19 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 ✅ **Direct Disk I/O** - No temp files, direct write syscalls  
 ✅ **Multi-threaded** - Handle multiple clients simultaneously  
 ✅ **Per-File Mutex** - Safe parallel uploads without corruption  
+✅ **Thread-safe Sensor Reads** - `pthread_mutex_t` around all kernel API calls  
+✅ **Smart Caching** - 1s sensor cache, 5s power-API throttle, permanent HW info cache  
 ✅ **5-Minute Socket Timeout** - No connection drops on large files  
-✅ **Game Mounting** - nullfs mount, DRM patching, metadata copy  
+✅ **Game Mounting** - nullfs mount, DRM patching, metadata copy, `sceAppInstUtil` registration  
+✅ **Game Launching** - `sceLncUtilLaunchApp` + fallback chain for pirated/mounted games  
 ✅ **Shell Commands** - Built-in shell with ls, cd, cat, mkdir, rm, etc.  
 ✅ **Filesystem Indexing** - In-memory index for instant search  
+✅ **Screenshot Management** - Full scan + safe delete of PS5 media files (.dat + .meta + .jpg.jpeg)  
+✅ **Hardware APIs** - Model, serial, temps, CPU freq, power via verified Sony kernel APIs  
+✅ **Storage Matching PS5 Settings** - Aggregates /user + /system_data + /system_ex  
 
 ### Windows Client
-✅ **Modern UI** - Dark theme, maximized window  
+✅ **Modern UI** - Dark theme, maximized window, 8+ functional tabs  
 ✅ **Drag & Drop** - Files and folders  
 ✅ **Browse PS5** - Navigate filesystem with favorites  
 ✅ **Real-time Speed** - Sliding window algorithm for accurate speed display  
@@ -114,26 +188,65 @@ Download the latest release from the [Releases](https://github.com/manos555555/P
 ✅ **Duplicate File Dialog** - Handle file conflicts during upload  
 ✅ **Folder Upload** - Recursive directory upload  
 ✅ **Download Files** - Download from PS5 to PC  
-✅ **💾 Storage Display** - Real-time PS5 storage info (free/used/total)  
+✅ **💾 Storage Display** - Real-time PS5 storage info (matches PS5 Settings exactly)  
 ✅ **🔍 Smart Search** - Full filesystem indexing with instant search  
   - Wildcard support: `*.pkg`, `*loader*`, `game*.bin`
   - Size filters: `size:>1GB`, `size:<100MB`
   - Case-insensitive matching
   - Search both filename and full path
   - Double-click to navigate to folder
+
 ✅ **💻 Shell Terminal** - Execute commands directly on PS5  
   - Run system commands remotely
   - Real-time output display
   - Command history
   - Working directory support
+
 ✅ **⭐ Favorites/Bookmarks** - Quick navigation to saved paths  
 ✅ **👥 Multi-PS5 Profiles** - Save and switch between multiple PS5 consoles  
+
 ✅ **🎮 Mount Games** - Mount uploaded games directly from the client  
   - Scans all game paths: internal, USB drives (0-3), M.2 SSD
   - Duplicate detection across storage locations
   - Auto-cleanup of deleted game mounts
   - PS5 notifications with mount progress
-  - Automatic game registration via game_mounter.elf
+  - In-payload registration (no external binary required)
+
+✅ **▶️ Launch Games** - One-click launch for mounted games  
+  - `sceLncUtilLaunchApp` low-level launcher
+  - Works on pirated/sideloaded games
+  - Fallback to SystemService API
+  - Right-click context menu on any game
+
+✅ **💾 Save Manager Tab** - Full PS5 save file management  
+  - Per-game save browsing with thumbnails
+  - Game icons fetched and cached from PSN/param.sfo
+  - Batch download saves to local backup folder
+  - Upload saves back to PS5
+  - Size, date, and metadata display
+
+✅ **🎮 Game Details Window** - Rich game information  
+  - PSN cover art (fetched from PlayStation Store)
+  - Full param.json metadata formatted
+  - Online PSN description, genres, age rating, publisher
+  - Alternate title ID detection (regional variants)
+  - Browser search fallback
+
+✅ **📷 Screenshots Tab** - Complete media gallery  
+  - Visual thumbnail previews (downsampled 200px)
+  - Local cache in %TEMP% (reuses across refreshes)
+  - Batch download/delete multi-select
+  - Double-click preview in default image viewer
+  - Clean delete removes ALL 3 PS5 files (.dat + .meta + .jpg.jpeg)
+  - No more ghost entries in PS5 Media Gallery
+
+✅ **🖥️ Hardware Monitor Tab** - Live system stats  
+  - **System Info:** Model (CFI-xxxx), Serial, Architecture, OS, CPU Cores, RAM, Wi-Fi/BT
+  - **Live Sensors:** CPU temp, SoC temp, CPU frequency, SoC power consumption
+  - Auto-refresh with configurable 5s interval
+  - Busy-flag guard prevents overlapping refreshes
+  - Auto-stops on disconnect
+  - Progress bars for visual feedback
 
 ---
 

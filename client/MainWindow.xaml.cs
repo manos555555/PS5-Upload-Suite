@@ -108,6 +108,7 @@ namespace PS5Upload
         private enum DuplicateAction { Ask, Replace, Skip, ReplaceAll, SkipAll }
         private DuplicateAction _duplicateAction = DuplicateAction.Ask;
         
+        
         // Shell Terminal
         private bool _shellActive = false;
         private ObservableCollection<string> _shellOutput = new ObservableCollection<string>();
@@ -131,6 +132,7 @@ namespace PS5Upload
             _uiUpdateTimer = new DispatcherTimer();
             _uiUpdateTimer.Interval = TimeSpan.FromMilliseconds(500);
             _uiUpdateTimer.Tick += UiUpdateTimer_Tick;
+            
             
             
             // Subscribe to progress messages from protocol
@@ -638,6 +640,9 @@ namespace PS5Upload
                     
                     // Load storage info
                     await RefreshStorageInfoAsync();
+                    
+                    // NOTE: Hardware refresh disabled for stability
+                    // User can manually refresh with the Refresh button in Hardware tab
                 }
                 else
                 {
@@ -656,7 +661,7 @@ namespace PS5Upload
                 // Ensure connection is active before loading directory
                 if (!_protocol.IsConnected)
                 {
-                    Log("⚠️ Connection lost, reconnecting...");
+                    Log($"⚠️ Connection lost (LastError: {_protocol.LastError}), reconnecting...");
                     if (!await _protocol.ConnectAsync(_ps5IpAddress))
                     {
                         MessageBox.Show("Failed to reconnect to PS5", "Connection Error", MessageBoxButton.OK, MessageBoxImage.Error);
@@ -2258,11 +2263,80 @@ namespace PS5Upload
             {
                 if (item.IsDirectory)
                 {
-                    MessageBox.Show("Folder download not yet implemented. Please select a file.", "Info", MessageBoxButton.OK, MessageBoxImage.Information);
+                    // Folder download - use FolderBrowserDialog
+                    using var folderDialog = new System.Windows.Forms.FolderBrowserDialog
+                    {
+                        Description = $"Select destination for '{item.Name}' folder",
+                        UseDescriptionForTitle = true
+                    };
+                    
+                    if (folderDialog.ShowDialog() != System.Windows.Forms.DialogResult.OK)
+                        return;
+                    
+                    string localBasePath = Path.Combine(folderDialog.SelectedPath, item.Name);
+                    
+                    try
+                    {
+                        Log($"⬇️ Downloading folder: {item.FullPath} → {localBasePath}");
+                        
+                        _uploadCancellation = new CancellationTokenSource();
+                        var ct = _uploadCancellation.Token;
+                        
+                        var progress = new Progress<DownloadFolderProgress>(p =>
+                        {
+                            Dispatcher.InvokeAsync(() =>
+                            {
+                                if (p.Phase == "Scanning")
+                                {
+                                    TotalProgressText.Text = $"Scanning: {p.FilesCompleted} files found... ({p.CurrentFile})";
+                                }
+                                else if (p.Phase == "Downloading")
+                                {
+                                    double percent = p.TotalBytes > 0 ? (double)p.BytesDownloaded / p.TotalBytes * 100 : 0;
+                                    TotalProgressBar.Value = percent;
+                                    TotalProgressText.Text = $"Downloading: {p.FilesCompleted}/{p.TotalFiles} files ({FormatFileSize(p.BytesDownloaded)}/{FormatFileSize(p.TotalBytes)}) [{percent:F1}%]";
+                                    if (!string.IsNullOrEmpty(p.CurrentFile))
+                                        UploadFileNameText.Text = $"⬇️ {p.CurrentFile}";
+                                }
+                                else if (p.Phase == "Complete")
+                                {
+                                    TotalProgressBar.Value = 100;
+                                    TotalProgressText.Text = $"Complete: {p.FilesCompleted}/{p.TotalFiles} files ({FormatFileSize(p.BytesDownloaded)})";
+                                }
+                            }, System.Windows.Threading.DispatcherPriority.Normal);
+                        });
+                        
+                        var (downloaded, failed, totalBytes) = await _protocol.DownloadFolderAsync(
+                            item.FullPath, localBasePath, _ps5IpAddress, progress, ct);
+                        
+                        Log($"✅ Folder download complete: {downloaded} files ({FormatFileSize(totalBytes)}), {failed} failed");
+                        
+                        string msg = $"Folder downloaded!\n\n" +
+                                     $"Files: {downloaded} downloaded, {failed} failed\n" +
+                                     $"Size: {FormatFileSize(totalBytes)}\n" +
+                                     $"Saved to: {localBasePath}";
+                        MessageBox.Show(msg, "Download Complete", MessageBoxButton.OK, 
+                            failed > 0 ? MessageBoxImage.Warning : MessageBoxImage.Information);
+                    }
+                    catch (Exception ex)
+                    {
+                        Log($"❌ Folder download error: {ex.Message}");
+                        MessageBox.Show($"Folder download error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                    finally
+                    {
+                        _uploadCancellation = null;
+                        Dispatcher.Invoke(() =>
+                        {
+                            TotalProgressBar.Value = 0;
+                            TotalProgressText.Text = "";
+                            UploadFileNameText.Text = "";
+                        });
+                    }
                     return;
                 }
                 
-                // Show save file dialog
+                // Single file download - use SaveFileDialog
                 var dialog = new Microsoft.Win32.SaveFileDialog
                 {
                     FileName = item.Name,
@@ -2277,11 +2351,12 @@ namespace PS5Upload
                         
                         var progress = new Progress<UploadProgress>(p =>
                         {
-                            Dispatcher.Invoke(() =>
+                            Dispatcher.InvokeAsync(() =>
                             {
                                 double percent = p.TotalBytes > 0 ? (double)p.BytesSent / p.TotalBytes * 100 : 0;
-                                Log($"📊 Download progress: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({percent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s");
-                            });
+                                TotalProgressBar.Value = percent;
+                                TotalProgressText.Text = $"Downloading: {FormatFileSize(p.BytesSent)}/{FormatFileSize(p.TotalBytes)} ({percent:F1}%) @ {FormatFileSize((long)p.SpeedBytesPerSecond)}/s";
+                            }, System.Windows.Threading.DispatcherPriority.Normal);
                         });
                         
                         bool success = await _protocol.DownloadFileAsync(item.FullPath, dialog.FileName, progress);
@@ -2301,6 +2376,14 @@ namespace PS5Upload
                     {
                         Log($"❌ Download error: {ex.Message}");
                         MessageBox.Show($"Download error: {ex.Message}", "Error", MessageBoxButton.OK, MessageBoxImage.Error);
+                    }
+                    finally
+                    {
+                        Dispatcher.Invoke(() =>
+                        {
+                            TotalProgressBar.Value = 0;
+                            TotalProgressText.Text = "";
+                        });
                     }
                 }
             }
@@ -3279,33 +3362,6 @@ namespace PS5Upload
                             Log($"  {line.Trim()}");
                     }
 
-                    // Check if there were new mounts that need registration
-                    bool hasNewMounts = result.Contains("New mounts:") && !result.Contains("New mounts: 0");
-                    
-                    if (hasNewMounts)
-                    {
-                        Log("🎮 New games detected - running game_mounter.elf for registration...");
-                        MountGamesButton.Content = "⏳ Registering...";
-                        
-                        // Execute standalone game_mounter.elf for sceAppInstUtil registration
-                        try
-                        {
-                            var shellResult = await _protocol.ExecuteShellCommandAsync("exec /data/etaHEN/payloads/game_mounter.elf");
-                            if (shellResult != null)
-                            {
-                                Log("✅ Game registration completed via game_mounter.elf");
-                            }
-                            else
-                            {
-                                Log("⚠️ game_mounter.elf may not be available - games mounted but may need manual registration");
-                            }
-                        }
-                        catch
-                        {
-                            Log("⚠️ Could not run game_mounter.elf - games are mounted via nullfs but may not appear on home screen until game_mounter.elf is run");
-                        }
-                    }
-
                     MessageBox.Show(result, "Mount Games - Result", MessageBoxButton.OK, MessageBoxImage.Information);
                 }
                 else
@@ -3502,6 +3558,787 @@ namespace PS5Upload
             catch (Exception ex)
             {
                 Log($"❌ Failed to open link: {ex.Message}");
+            }
+        }
+
+        // ============================================================================
+        // SAVES TAB - Event Handlers
+        // ============================================================================
+
+        private List<PS5SaveGame> _currentSaves = new();
+
+        private async void RefreshSavesButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshSavesAsync();
+        }
+
+        private async Task RefreshSavesAsync()
+        {
+            if (!_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+
+            Log("💾 Fetching save games list...");
+            try
+            {
+                var saves = await _protocol.ListSavesAsync();
+                _currentSaves = saves;
+
+                // Enrich with game names + icons from mounted games list (if available)
+                var mounted = await _protocol.GetGameListAsync();
+                var nameByTitle = mounted.ToDictionary(g => g.TitleId, g => g.Name, StringComparer.OrdinalIgnoreCase);
+
+                foreach (var save in saves)
+                {
+                    if (nameByTitle.TryGetValue(save.TitleId, out var gameName))
+                        save.GameName = gameName;
+                    else
+                        save.GameName = save.TitleId;
+
+                    if (_iconCache.TryGetValue(save.TitleId, out var cachedIcon))
+                        save.Icon = cachedIcon;
+                }
+
+                Dispatcher.Invoke(() =>
+                {
+                    SavesListBox.ItemsSource = saves;
+                    SaveCountText.Text = $" ({saves.Count} saves)";
+                });
+
+                Log($"💾 Found {saves.Count} save games");
+
+                // Fetch missing icons in background
+                _ = Task.Run(async () =>
+                {
+                    foreach (var save in saves)
+                    {
+                        if (save.Icon != null) continue;
+                        try
+                        {
+                            var bytes = await _protocol.GetGameIconAsync(save.TitleId);
+                            if (bytes != null && bytes.Length > 0)
+                            {
+                                Dispatcher.Invoke(() =>
+                                {
+                                    try
+                                    {
+                                        var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                                        bmp.BeginInit();
+                                        bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                                        bmp.StreamSource = new MemoryStream(bytes);
+                                        bmp.EndInit();
+                                        bmp.Freeze();
+                                        _iconCache[save.TitleId] = bmp;
+                                        save.Icon = bmp;
+                                    }
+                                    catch { }
+                                });
+                            }
+                        }
+                        catch { }
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Error fetching saves: {ex.Message}");
+            }
+        }
+
+        private async void BackupSaveButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SavesListBox.SelectedItem is PS5SaveGame save)
+                await BackupSaveAsync(save);
+            else
+                MessageBox.Show("Select a save first.", "No Selection",
+                                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private async void BackupSaveMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (SavesListBox.SelectedItem is PS5SaveGame save)
+                await BackupSaveAsync(save);
+        }
+
+        private async Task BackupSaveAsync(PS5SaveGame save)
+        {
+            if (!_protocol.IsConnected)
+            {
+                MessageBox.Show("Not connected to PS5.", "Error",
+                                MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var dlg = new Microsoft.Win32.SaveFileDialog
+            {
+                Title = "Choose backup location",
+                FileName = $"{save.TitleId}_{save.UserId}_{DateTime.Now:yyyyMMdd_HHmmss}",
+                Filter = "Folder (choose any file name to pick a folder)|*",
+                OverwritePrompt = false,
+                CheckPathExists = true
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            string parentDir = Path.GetDirectoryName(dlg.FileName) ?? "";
+            string backupDir = Path.Combine(parentDir, Path.GetFileNameWithoutExtension(dlg.FileName));
+            Directory.CreateDirectory(backupDir);
+
+            Log($"📥 Backing up save {save.TitleId} to {backupDir}...");
+            try
+            {
+                var result = await _protocol.DownloadFolderAsync(
+                    save.SavePath,
+                    backupDir,
+                    _ps5IpAddress,
+                    null,
+                    System.Threading.CancellationToken.None);
+
+                Log($"✅ Backup complete: {result.filesDownloaded} files, " +
+                    $"{result.filesFailed} failed, {FormatFileSize(result.totalBytes)} total");
+
+                MessageBox.Show($"Backup complete!\n\n" +
+                                $"Location: {backupDir}\n" +
+                                $"Files: {result.filesDownloaded}\n" +
+                                $"Failed: {result.filesFailed}\n" +
+                                $"Size: {FormatFileSize(result.totalBytes)}",
+                                "Backup Complete",
+                                MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Backup failed: {ex.Message}");
+                MessageBox.Show($"Backup failed:\n{ex.Message}", "Error",
+                                MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private async void RestoreSaveButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (SavesListBox.SelectedItem is PS5SaveGame save)
+                await RestoreSaveAsync(save);
+            else
+                MessageBox.Show("Select a save first.", "No Selection",
+                                MessageBoxButton.OK, MessageBoxImage.Information);
+        }
+
+        private async void RestoreSaveMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (SavesListBox.SelectedItem is PS5SaveGame save)
+                await RestoreSaveAsync(save);
+        }
+
+        private async Task RestoreSaveAsync(PS5SaveGame save)
+        {
+            if (!_protocol.IsConnected)
+            {
+                MessageBox.Show("Not connected to PS5.", "Error",
+                                MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var dlg = new Microsoft.Win32.OpenFileDialog
+            {
+                Title = "Select any file from the backup folder to restore",
+                CheckFileExists = true
+            };
+            if (dlg.ShowDialog() != true) return;
+
+            string backupFolder = Path.GetDirectoryName(dlg.FileName) ?? "";
+            if (string.IsNullOrWhiteSpace(backupFolder) || !Directory.Exists(backupFolder))
+            {
+                MessageBox.Show("Invalid folder.", "Error",
+                                MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var confirm = MessageBox.Show(
+                $"Restore save {save.TitleId} to PS5?\n\n" +
+                $"From: {backupFolder}\n" +
+                $"To:   {save.SavePath}\n\n" +
+                $"Files in the PS5 save will be overwritten.",
+                "Confirm Restore",
+                MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (confirm != MessageBoxResult.Yes) return;
+
+            Log($"📤 Restoring save {save.TitleId} from {backupFolder}...");
+            int uploaded = 0, failed = 0;
+            long totalBytes = 0;
+            try
+            {
+                foreach (var localFile in Directory.EnumerateFiles(backupFolder, "*", SearchOption.AllDirectories))
+                {
+                    string rel = Path.GetRelativePath(backupFolder, localFile).Replace('\\', '/');
+                    string remote = save.SavePath.TrimEnd('/') + "/" + rel;
+                    try
+                    {
+                        bool ok = await _protocol.UploadFileAsync(localFile, remote);
+                        if (ok)
+                        {
+                            uploaded++;
+                            totalBytes += new FileInfo(localFile).Length;
+                        }
+                        else failed++;
+                    }
+                    catch { failed++; }
+                }
+
+                Log($"✅ Restore complete: {uploaded} uploaded, {failed} failed, {FormatFileSize(totalBytes)}");
+                MessageBox.Show($"Restore complete!\n\n" +
+                                $"Uploaded: {uploaded}\n" +
+                                $"Failed: {failed}\n" +
+                                $"Size: {FormatFileSize(totalBytes)}",
+                                "Restore Complete",
+                                MessageBoxButton.OK, MessageBoxImage.Information);
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Restore failed: {ex.Message}");
+                MessageBox.Show($"Restore failed:\n{ex.Message}", "Error",
+                                MessageBoxButton.OK, MessageBoxImage.Error);
+            }
+        }
+
+        private void CopySavePathMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (SavesListBox.SelectedItem is PS5SaveGame save)
+            {
+                try
+                {
+                    System.Windows.Clipboard.SetText(save.SavePath);
+                    Log($"📋 Copied: {save.SavePath}");
+                }
+                catch (Exception ex)
+                {
+                    Log($"❌ Clipboard: {ex.Message}");
+                }
+            }
+        }
+
+        // ============================================================================
+        // GAMES TAB - Event Handlers
+        // ============================================================================
+
+        private async void RefreshGameListButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshGameListAsync();
+        }
+
+        // In-memory icon cache (title_id -> ImageSource) so we don't refetch on every refresh
+        private readonly Dictionary<string, System.Windows.Media.ImageSource> _iconCache = new();
+
+        private async Task RefreshGameListAsync()
+        {
+            if (!_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+
+            Log("🎮 Fetching mounted games list...");
+
+            try
+            {
+                var games = await _protocol.GetGameListAsync();
+                
+                Dispatcher.Invoke(() =>
+                {
+                    MountedGamesListBox.ItemsSource = games;
+                    GameCountText.Text = $" ({games.Count} games)";
+                });
+
+                if (games.Count > 0)
+                {
+                    Log($"🎮 Found {games.Count} mounted games:");
+                    foreach (var game in games)
+                    {
+                        Log($"   • {game.TitleId} - {game.Name} [{game.Region}]");
+                    }
+
+                    // Fetch icons in background, one at a time to avoid swamping the payload
+                    _ = Task.Run(async () =>
+                    {
+                        foreach (var game in games)
+                        {
+                            if (_iconCache.TryGetValue(game.TitleId, out var cached))
+                            {
+                                Dispatcher.Invoke(() => game.Icon = cached);
+                                continue;
+                            }
+
+                            try
+                            {
+                                var iconBytes = await _protocol.GetGameIconAsync(game.TitleId);
+                                if (iconBytes != null && iconBytes.Length > 0)
+                                {
+                                    Dispatcher.Invoke(() =>
+                                    {
+                                        try
+                                        {
+                                            var bitmap = new System.Windows.Media.Imaging.BitmapImage();
+                                            bitmap.BeginInit();
+                                            bitmap.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                                            bitmap.StreamSource = new MemoryStream(iconBytes);
+                                            bitmap.EndInit();
+                                            bitmap.Freeze();
+                                            _iconCache[game.TitleId] = bitmap;
+                                            game.Icon = bitmap;
+                                        }
+                                        catch { /* corrupt/invalid image */ }
+                                    });
+                                }
+                            }
+                            catch { /* skip failed icons */ }
+                        }
+                    });
+                }
+                else
+                {
+                    Log("🎮 No mounted games found");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Error fetching game list: {ex.Message}");
+            }
+        }
+
+        private async void MountedGamesListBox_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (MountedGamesListBox.SelectedItem is PS5MountedGame game)
+            {
+                await ShowGameDetailsAsync(game);
+            }
+        }
+
+        private async void ViewGameDetailsMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (MountedGamesListBox.SelectedItem is PS5MountedGame game)
+            {
+                await ShowGameDetailsAsync(game);
+            }
+        }
+
+        private async Task ShowGameDetailsAsync(PS5MountedGame game)
+        {
+            if (!_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+
+            Log($"ℹ️  Fetching details for {game.TitleId}...");
+            var details = await _protocol.GetGameDetailsAsync(game.TitleId);
+            if (details == null)
+            {
+                MessageBox.Show("Failed to fetch game details.", "Error",
+                                MessageBoxButton.OK, MessageBoxImage.Warning);
+                return;
+            }
+
+            var dlg = new GameDetailsWindow(game, details, _protocol) { Owner = this };
+            dlg.ShowDialog();
+        }
+
+        private async void UnmountGameMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (MountedGamesListBox.SelectedItem is PS5MountedGame game)
+            {
+                var result = MessageBox.Show(
+                    $"Unmount game {game.TitleId}?\n\n{game.Name}\n\nThis will remove the game from the PS5 home screen.",
+                    "Confirm Unmount",
+                    MessageBoxButton.YesNo,
+                    MessageBoxImage.Question);
+
+                if (result == MessageBoxResult.Yes)
+                {
+                    Log($"🗑️ Unmounting {game.TitleId}...");
+                    var (success, message) = await _protocol.UnmountGameAsync(game.TitleId);
+                    if (success)
+                    {
+                        Log($"✅ {message}");
+                        await RefreshGameListAsync();
+                    }
+                    else
+                    {
+                        Log($"❌ Failed: {message}");
+                    }
+                }
+            }
+        }
+
+        private async void OpenGamePathMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (MountedGamesListBox.SelectedItem is PS5MountedGame game)
+            {
+                // Navigate to the game's path in the PS5 file browser
+                string gamePath = game.Path;
+                if (!string.IsNullOrEmpty(gamePath))
+                {
+                    Log($"📂 Navigating to {gamePath}");
+                    _currentPS5Path = gamePath;
+                    await LoadPS5DirectoryAsync(gamePath);
+                }
+            }
+        }
+
+        // ============================================================
+        // LAUNCH GAME
+        // ============================================================
+        private async void LaunchGameMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (MountedGamesListBox.SelectedItem is not PS5MountedGame game) return;
+            if (_protocol == null || !_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+
+            Log($"▶ Launching {game.TitleId} ({game.Name})...");
+            var (success, message) = await _protocol.LaunchGameAsync(game.TitleId);
+            if (success)
+                Log($"✅ {message}");
+            else
+                Log($"❌ Launch failed: {message}");
+        }
+
+        // ============================================================
+        // HARDWARE TAB
+        // ============================================================
+        private System.Windows.Threading.DispatcherTimer? _hwAutoTimer;
+        private int _hwBusyFlag; // 0 = idle, 1 = refresh in progress (Interlocked)
+
+        private async void RefreshHardwareButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshHardwareAsync();
+        }
+
+        private void HwAutoRefresh_Changed(object sender, RoutedEventArgs e)
+        {
+            if (HwAutoRefreshCheckBox?.IsChecked == true)
+            {
+                _hwAutoTimer ??= new System.Windows.Threading.DispatcherTimer
+                {
+                    Interval = TimeSpan.FromSeconds(5)  // 5s is plenty for sensor polling
+                };
+                _hwAutoTimer.Tick -= HwAutoTimer_Tick;
+                _hwAutoTimer.Tick += HwAutoTimer_Tick;
+                _hwAutoTimer.Start();
+            }
+            else
+            {
+                _hwAutoTimer?.Stop();
+            }
+        }
+
+        private async void HwAutoTimer_Tick(object? sender, EventArgs e)
+        {
+            // Auto-stop if disconnected
+            if (_protocol == null || !_protocol.IsConnected)
+            {
+                _hwAutoTimer?.Stop();
+                HwAutoRefreshCheckBox.IsChecked = false;
+                HwStatusText.Text = "Auto-refresh stopped: disconnected";
+                return;
+            }
+            // Skip if previous refresh still running or app is busy (uploads, etc.)
+            if (Interlocked.CompareExchange(ref _hwBusyFlag, 1, 0) != 0) return;
+            if (_activeTaskCount > 0)
+            {
+                Interlocked.Exchange(ref _hwBusyFlag, 0);
+                return;
+            }
+            try
+            {
+                await RefreshHardwareSensorsAsync();
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _hwBusyFlag, 0);
+            }
+        }
+
+        private async Task RefreshHardwareAsync()
+        {
+            if (_protocol == null || !_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+            if (Interlocked.CompareExchange(ref _hwBusyFlag, 1, 0) != 0)
+            {
+                Log("⏳ Hardware refresh already in progress");
+                return;
+            }
+
+            try
+            {
+                var hw = await _protocol.GetHardwareInfoAsync();
+                if (hw != null)
+                {
+                    HwModelText.Text       = string.IsNullOrWhiteSpace(hw.Model) ? "PlayStation 5" : hw.Model;
+                    HwSerialText.Text      = string.IsNullOrWhiteSpace(hw.Serial) ? "—" : hw.Serial;
+                    HwMachineText.Text     = string.IsNullOrWhiteSpace(hw.HwMachine) ? "—" : hw.HwMachine;
+                    HwOsText.Text          = string.IsNullOrWhiteSpace(hw.OsVersion) ? "—" : hw.OsVersion;
+                    HwCpuCoresText.Text    = hw.NumCpu > 0 ? $"{hw.NumCpu} cores" : "—";
+                    HwPhysMemText.Text     = hw.PhysMem > 0
+                        ? $"{hw.PhysMem / (1024.0 * 1024.0 * 1024.0):0.0} GB"
+                        : "—";
+                    HwWlanBtText.Text      = hw.HasWlanBt ? "✓ Present" : "✗ None";
+                    HwOpticalOutText.Text  = hw.HasOpticalOut ? "✓ Present" : "✗ None";
+                }
+
+                await RefreshHardwareSensorsAsync();
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Hardware refresh failed: {ex.Message}");
+                HwStatusText.Text = $"Error: {ex.Message}";
+            }
+            finally
+            {
+                Interlocked.Exchange(ref _hwBusyFlag, 0);
+            }
+        }
+
+        private async Task RefreshHardwareSensorsAsync()
+        {
+            if (_protocol == null || !_protocol.IsConnected) return;
+
+            try
+            {
+                var t = await _protocol.GetTemperatureInfoAsync();
+                if (t == null)
+                {
+                    HwStatusText.Text = "Sensors unavailable";
+                    return;
+                }
+
+                HwCpuTempText.Text = $"{t.CpuTemp} °C";
+                HwCpuTempBar.Value = Math.Clamp(t.CpuTemp, 0, 100);
+
+                HwSocTempText.Text = $"{t.SocTemp} °C";
+                HwSocTempBar.Value = Math.Clamp(t.SocTemp, 0, 100);
+
+                HwCpuFreqText.Text = t.CpuFreqMhz > 0 ? $"{t.CpuFreqMhz} MHz" : "—";
+                HwCpuFreqBar.Value = Math.Clamp(t.CpuFreqMhz, 0, 3500);
+
+                double watts = t.SocPowerMw / 1000.0;
+                HwSocPowerText.Text = t.SocPowerMw > 0 ? $"{watts:0.0} W" : "—";
+                HwSocPowerBar.Value = Math.Clamp(watts, 0, 250);
+
+                HwStatusText.Text = $"Last updated: {DateTime.Now:HH:mm:ss}";
+            }
+            catch (Exception ex)
+            {
+                HwStatusText.Text = $"Error: {ex.Message}";
+            }
+        }
+
+        // ============================================================
+        // SCREENSHOTS TAB
+        // ============================================================
+        private List<PS5Screenshot> _currentScreenshots = new();
+
+        private async void RefreshScreenshotsButton_Click(object sender, RoutedEventArgs e)
+        {
+            await RefreshScreenshotsAsync();
+        }
+
+        // Thumbnail cache: remote PS5 path -> BitmapImage (Frozen)
+        private readonly Dictionary<string, System.Windows.Media.ImageSource> _screenshotThumbCache = new();
+
+        private async Task RefreshScreenshotsAsync()
+        {
+            if (_protocol == null || !_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+
+            Log("📷 Fetching screenshots list...");
+            try
+            {
+                var shots = await _protocol.ListScreenshotsAsync();
+                _currentScreenshots = shots;
+
+                // Apply cached thumbnails immediately
+                foreach (var s in shots)
+                {
+                    if (_screenshotThumbCache.TryGetValue(s.FullPath, out var cached))
+                        s.Thumbnail = cached;
+                }
+
+                ScreenshotsListBox.ItemsSource = null;
+                ScreenshotsListBox.ItemsSource = shots;
+                ScreenshotsCountText.Text = $"({shots.Count} items)";
+                Log($"✅ Found {shots.Count} screenshots");
+
+                // Background: download thumbnails for items without one
+                _ = Task.Run(async () =>
+                {
+                    string cacheDir = System.IO.Path.Combine(
+                        System.IO.Path.GetTempPath(), "PS5UploadCache", "ss_thumbs");
+                    Directory.CreateDirectory(cacheDir);
+
+                    foreach (var shot in shots)
+                    {
+                        if (shot.Thumbnail != null) continue;
+                        if (_protocol == null || !_protocol.IsConnected) break;
+
+                        // Use hash of remote path as cache file name
+                        string hash = shot.FullPath.GetHashCode().ToString("X8");
+                        string ext = System.IO.Path.GetExtension(shot.FileName).ToLowerInvariant();
+                        if (string.IsNullOrEmpty(ext)) ext = ".jpg";
+                        string localCache = System.IO.Path.Combine(cacheDir, hash + ext);
+
+                        try
+                        {
+                            if (!File.Exists(localCache) || new FileInfo(localCache).Length == 0)
+                            {
+                                bool ok = await _protocol.DownloadFileAsync(shot.FullPath, localCache);
+                                if (!ok) continue;
+                            }
+
+                            // Decode downsampled to save RAM (target ~200px wide)
+                            var bmp = new System.Windows.Media.Imaging.BitmapImage();
+                            bmp.BeginInit();
+                            bmp.CacheOption = System.Windows.Media.Imaging.BitmapCacheOption.OnLoad;
+                            bmp.DecodePixelWidth = 200;
+                            bmp.UriSource = new Uri(localCache, UriKind.Absolute);
+                            bmp.EndInit();
+                            bmp.Freeze();
+
+                            Dispatcher.Invoke(() =>
+                            {
+                                _screenshotThumbCache[shot.FullPath] = bmp;
+                                shot.Thumbnail = bmp;
+                            });
+                        }
+                        catch
+                        {
+                            // Skip broken images; the emoji fallback stays
+                        }
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Screenshots fetch failed: {ex.Message}");
+            }
+        }
+
+        private async void DownloadScreenshotButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_protocol == null || !_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+            var selected = ScreenshotsListBox.SelectedItems.Cast<PS5Screenshot>().ToList();
+            if (selected.Count == 0)
+            {
+                Log("⚠️ No screenshots selected");
+                return;
+            }
+
+            var dlg = new System.Windows.Forms.FolderBrowserDialog
+            {
+                Description = "Select folder to save screenshots"
+            };
+            if (dlg.ShowDialog() != System.Windows.Forms.DialogResult.OK) return;
+            string targetFolder = dlg.SelectedPath;
+
+            int ok = 0, fail = 0;
+            foreach (var shot in selected)
+            {
+                string localPath = System.IO.Path.Combine(targetFolder, shot.FileName);
+                Log($"⬇ Downloading {shot.FileName} ({shot.SizeDisplay})...");
+                try
+                {
+                    bool success = await _protocol.DownloadFileAsync(shot.FullPath, localPath);
+                    if (success) { ok++; } else { fail++; Log($"❌ Failed: {shot.FileName}"); }
+                }
+                catch (Exception ex) { fail++; Log($"❌ {shot.FileName}: {ex.Message}"); }
+            }
+            Log($"✅ Downloaded {ok} screenshot(s), {fail} failed → {targetFolder}");
+        }
+
+        private async void DeleteScreenshotButton_Click(object sender, RoutedEventArgs e)
+        {
+            if (_protocol == null || !_protocol.IsConnected)
+            {
+                Log("❌ Not connected to PS5");
+                return;
+            }
+            var selected = ScreenshotsListBox.SelectedItems.Cast<PS5Screenshot>().ToList();
+            if (selected.Count == 0)
+            {
+                Log("⚠️ No screenshots selected");
+                return;
+            }
+
+            var result = MessageBox.Show(
+                $"Delete {selected.Count} screenshot(s) from PS5?\n\nThis cannot be undone.",
+                "Confirm Delete", MessageBoxButton.YesNo, MessageBoxImage.Warning);
+            if (result != MessageBoxResult.Yes) return;
+
+            int ok = 0, fail = 0;
+            foreach (var shot in selected)
+            {
+                try
+                {
+                    // Use dedicated screenshot-delete which also clears PS5's parallel thumbnail
+                    var (success, _) = await _protocol.DeleteScreenshotAsync(shot.FullPath);
+                    if (success) ok++; else fail++;
+                }
+                catch { fail++; }
+            }
+            Log($"🗑️ Deleted {ok} screenshot(s) (+ their PS5 thumbnails), {fail} failed");
+            await RefreshScreenshotsAsync();
+        }
+
+        private async void ScreenshotsListBox_MouseDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+        {
+            if (ScreenshotsListBox.SelectedItem is not PS5Screenshot shot) return;
+            if (_protocol == null || !_protocol.IsConnected) return;
+
+            // Download to %TEMP% and open with default viewer
+            string tempPath = System.IO.Path.Combine(System.IO.Path.GetTempPath(), shot.FileName);
+            Log($"⬇ Opening preview: {shot.FileName}...");
+            try
+            {
+                bool ok = await _protocol.DownloadFileAsync(shot.FullPath, tempPath);
+                if (ok)
+                {
+                    System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                    {
+                        FileName = tempPath,
+                        UseShellExecute = true
+                    });
+                }
+                else
+                {
+                    Log($"❌ Failed to download preview");
+                }
+            }
+            catch (Exception ex)
+            {
+                Log($"❌ Preview failed: {ex.Message}");
+            }
+        }
+
+        private void CopyScreenshotPathMenuItem_Click(object sender, RoutedEventArgs e)
+        {
+            if (ScreenshotsListBox.SelectedItem is PS5Screenshot shot)
+            {
+                try
+                {
+                    Clipboard.SetText(shot.FullPath);
+                    Log($"📋 Copied path: {shot.FullPath}");
+                }
+                catch { }
             }
         }
     }

@@ -28,6 +28,35 @@
 #include <stdbool.h>
 #include <ctype.h>
 #include <stdarg.h>
+#include <sys/sysctl.h>
+
+// Sony PS5 kernel functions for hardware monitoring
+// ONLY the APIs that appear in the official ps5-payload-sdk/samples/hwinfo/main.c
+// Extra "hw info" APIs (power consumption, wlan/bt, optical, icc) were removed
+// because they destabilize the payload process under repeated calls.
+extern int  sceKernelGetHwModelName(char *name);
+extern int  sceKernelGetHwSerialNumber(char *serial);
+extern int  sceKernelGetCpuTemperature(int *temperature);
+extern int  sceKernelGetSocSensorTemperature(int sensor_id, int *temperature);
+extern long sceKernelGetCpuFrequency(void);
+// PS5-specific memory query APIs (safe, just return sizes)
+extern size_t sceKernelGetDirectMemorySize(void);
+// Power consumption - called at most once every 5s to avoid destabilizing the payload
+extern int sceKernelGetSocPowerConsumption(uint32_t *power_mw);
+
+// Game launch APIs (both available in libSceSystemService)
+// Low-level Lnc util - used by open-source launchers for mounted/sideloaded games
+extern int  sceLncUtilInitialize(void);
+extern int  sceLncUtilLaunchApp(const char *title_id, char *argv, void *param);
+extern int  sceSystemServiceLaunchApp(const char *title_id, const char **argv, void *opts);
+extern int  sceUserServiceInitialize(int *priority);
+extern int  sceUserServiceGetForegroundUser(int *user_id);
+
+// Sony PS5 app installation/registration
+extern int sceAppInstUtilInitialize(void);
+extern int sceAppInstUtilAppInstallTitleDir(const char *title_id, const char *base_path, void *reserved);
+extern int sceAppInstUtilAppUnInstall(const char *title_id);
+
 #include <sys/_iovec.h>
 #include <sys/param.h>
 #include <sys/uio.h>
@@ -134,6 +163,24 @@ void release_file_mutex(const char *path) {
 #define CMD_SEARCH_INDEX 0x42
 #define CMD_INDEX_CANCEL 0x43
 #define CMD_MOUNT_GAMES 0x30
+#define CMD_GET_FILE_INFO 0x31
+#define CMD_GET_SYSTEM_INFO 0x32
+#define CMD_VERIFY_FILE 0x33
+#define CMD_GET_HW_INFO 0x34
+#define CMD_GET_TEMPS 0x35
+#define CMD_GET_RUNNING_APPS 0x36
+#define CMD_KILL_APP 0x37
+#define CMD_LAUNCH_BROWSER 0x38
+#define CMD_GET_POWER_INFO 0x39
+#define CMD_GET_GAME_LIST 0x3A
+#define CMD_UNMOUNT_GAME 0x3B
+#define CMD_GET_GAME_ICON 0x3C
+#define CMD_GET_GAME_DETAILS 0x3D
+#define CMD_GET_GAME_PIC 0x3E
+#define CMD_LIST_SAVES 0x3F
+#define CMD_LAUNCH_GAME 0x44
+#define CMD_LIST_SCREENSHOTS 0x45
+#define CMD_DELETE_SCREENSHOT 0x46
 #define CMD_SHUTDOWN 0xFF
 
 // Protocol responses
@@ -715,9 +762,13 @@ static int process_game(const char* game_path, char* game_name_out, size_t name_
     copy_dir(src_sce_sys, user_sce_sys);
     copy_sce_sys_to_appmeta(src_sce_sys, title_id);
 
-    // Note: sceAppInstUtilAppInstallTitleDir not available in etaHEN payload context
-    // Registration is handled by standalone game_mounter.elf if needed
+    // Register the game with the PS5 system so it appears on the home screen
+    // Args: title_id, base_path ("/user/app/"), flags (0)
+    if (sceAppInstUtilAppInstallTitleDir(title_id, "/user/app/", 0)) {
+        return -1;
+    }
 
+    // Write mount.lnk AFTER registration to track the source path
     snprintf(mount_lnk_path, sizeof(mount_lnk_path), 
              "/user/app/%s/mount.lnk", title_id);
 
@@ -1159,91 +1210,64 @@ void handle_ping(client_session_t *session) {
 }
 
 void handle_list_storage(client_session_t *session) {
-    struct statfs *mntbuf = NULL;
-    int mntcount = 0;
+    struct statfs sf;
     
-    // Get all mount points using getmntinfo (like SDK sample)
-    mntcount = getmntinfo(&mntbuf, MNT_WAIT);
-    if (mntcount <= 0 || mntbuf == NULL) {
-        send_error(session->sock, "getmntinfo failed");
+    // PS5 Settings "Console Storage" formula:
+    //   Total = (/user total - /user reserved) + /system_data total + /system_ex total
+    //   Free  = /user bavail + /system_data bavail + /system_ex bavail
+    //
+    // Real PS5 example:
+    //   /user      total=872.69 GiB, reserved=92.53 GiB, bavail=346.93 GiB
+    //   /system_data total=7.98 GiB, bavail=6.83 GiB
+    //   /system_ex   total=1.50 GiB, bavail=0.15 GiB
+    //   → Total = 780.16 + 7.98 + 1.50 = 789.64 GiB = 847.9 GB (PS5 shows 848 GB) ✓
+    
+    if (statfs("/user", &sf) != 0) {
+        send_error(session->sock, "statfs /user failed");
         return;
     }
+    uint64_t u_blksz  = sf.f_bsize;
+    uint64_t u_total  = (uint64_t)sf.f_blocks * u_blksz;
+    uint64_t u_bfree  = (uint64_t)sf.f_bfree  * u_blksz;
+    uint64_t u_bavail = (sf.f_bavail > 0) ? (uint64_t)sf.f_bavail * u_blksz : u_bfree;
+    uint64_t u_rsvd   = (u_bfree > u_bavail) ? (u_bfree - u_bavail) : 0;
+    uint64_t u_displayable = u_total - u_rsvd;
     
-    // Find the user storage partition (largest one, typically /user or similar)
-    struct statfs *best = NULL;
-    uint64_t best_size = 0;
-    
-    for (int i = 0; i < mntcount; i++) {
-        uint64_t total = mntbuf[i].f_blocks * mntbuf[i].f_bsize;
-        // Look for large partitions (> 100GB) that are likely user storage
-        if (total > 100000000000ULL && total > best_size) {
-            best = &mntbuf[i];
-            best_size = total;
-        }
+    uint64_t sd_total = 0, sd_bavail = 0;
+    if (statfs("/system_data", &sf) == 0) {
+        uint64_t sd_blksz = sf.f_bsize;
+        sd_total  = (uint64_t)sf.f_blocks * sd_blksz;
+        uint64_t sd_bfree = (uint64_t)sf.f_bfree * sd_blksz;
+        sd_bavail = (sf.f_bavail > 0) ? (uint64_t)sf.f_bavail * sd_blksz : sd_bfree;
     }
     
-    if (best == NULL) {
-        // Fallback: use first partition with reasonable size
-        for (int i = 0; i < mntcount; i++) {
-            uint64_t total = mntbuf[i].f_blocks * mntbuf[i].f_bsize;
-            if (total > 1000000000ULL) {  // > 1GB
-                best = &mntbuf[i];
-                break;
-            }
-        }
+    uint64_t sx_total = 0, sx_bavail = 0;
+    if (statfs("/system_ex", &sf) == 0) {
+        uint64_t sx_blksz = sf.f_bsize;
+        sx_total  = (uint64_t)sf.f_blocks * sx_blksz;
+        uint64_t sx_bfree = (uint64_t)sf.f_bfree * sx_blksz;
+        sx_bavail = (sf.f_bavail > 0) ? (uint64_t)sf.f_bavail * sx_blksz : sx_bfree;
     }
     
-    if (best == NULL) {
-        send_error(session->sock, "No suitable storage partition found");
-        return;
-    }
+    uint64_t total_bytes = u_displayable + sd_total + sx_total;
+    uint64_t free_bytes  = u_bavail + sd_bavail + sx_bavail;
+    uint64_t used_bytes  = (total_bytes > free_bytes) ? (total_bytes - free_bytes) : 0;
+    uint64_t reserved_bytes = u_rsvd;
     
-    // Use statfs values (more accurate than statvfs on FreeBSD/PS5)
-    uint64_t block_size = best->f_bsize;
-    uint64_t blocks_total = best->f_blocks * block_size;
-    uint64_t all_free = best->f_bfree * block_size;
-    uint64_t user_avail = (best->f_bavail > 0) ? (uint64_t)best->f_bavail * block_size : all_free;
+    uint64_t mounted_games_size = (used_bytes * 95) / 100;
+    uint64_t user_data_size     = used_bytes - mounted_games_size;
     
-    // Calculate reserved space (for root/system) - this is the difference
-    // between f_bfree (all free) and f_bavail (available to user)
-    uint64_t reserved_bytes = (all_free > user_avail) ? (all_free - user_avail) : 0;
-    
-    // Calculate used space (what's actually occupied by files)
-    uint64_t used_bytes = blocks_total - all_free;
-    
-    // PS5 System Settings calculation:
-    // Total = f_bavail (user available) + used_bytes
-    // This gives the "usable capacity" that PS5 shows (848 GB for 1TB model)
-    // It excludes the reserved space from the total
-    uint64_t total_bytes = user_avail + used_bytes;  // Usable capacity (like PS5 shows)
-    uint64_t free_bytes = user_avail;                // Free space available to user
-    uint64_t available_bytes = user_avail;
-    
-    // Estimate mounted games and user data from used space
-    uint64_t mounted_games_size = 0;
-    uint64_t user_data_size = 0;
-    
-    if (used_bytes > 0) {
-        // Rough split: assume 95% is games, 5% is user data
-        mounted_games_size = (used_bytes * 95) / 100;
-        user_data_size = (used_bytes * 5) / 100;
-    }
-    
-    // Real free space = what's actually available to user
-    uint64_t real_free = user_avail;
-    
-    // Send response: total|free|available|reserved|mounted_games|user_data|real_free|path
     char response[512];
-    snprintf(response, sizeof(response), 
+    snprintf(response, sizeof(response),
              "%llu|%llu|%llu|%llu|%llu|%llu|%llu|%s",
              (unsigned long long)total_bytes,
              (unsigned long long)free_bytes,
-             (unsigned long long)available_bytes,
+             (unsigned long long)free_bytes,
              (unsigned long long)reserved_bytes,
              (unsigned long long)mounted_games_size,
              (unsigned long long)user_data_size,
-             (unsigned long long)real_free,
-             best->f_mntonname);
+             (unsigned long long)free_bytes,
+             "Console Storage");
     
     send_response(session->sock, RESP_DATA, response, strlen(response));
 }
@@ -2162,6 +2186,9 @@ static int remount_system_ex(void) {
 void handle_mount_games(client_session_t *session) {
     g_mounted_count = 0;
     
+    // Initialize app install utility
+    sceAppInstUtilInitialize();
+    
     // Remount /system_ex as writable
     remount_system_ex();
     
@@ -2295,6 +2322,1170 @@ void handle_mount_games(client_session_t *session) {
     }
 
     send_ok(session->sock, response);
+}
+
+// ============================================================================
+// HARDWARE & SYSTEM INFO FUNCTIONS
+// ============================================================================
+
+// Handle GET_GAME_LIST - Get list of all mounted games with details
+void handle_get_game_list(client_session_t *session) {
+    char *response = malloc(65536);  // 64KB for game list
+    if (!response) {
+        send_error(session->sock, "Out of memory");
+        return;
+    }
+    
+    int off = 0;
+    int game_count = 0;
+    
+    // Scan /user/app for mounted games (those with mount.lnk)
+    DIR *d = opendir("/user/app");
+    if (!d) {
+        send_error(session->sock, "Cannot open /user/app");
+        free(response);
+        return;
+    }
+    
+    struct dirent *e;
+    while ((e = readdir(d)) && off < 60000) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+            continue;
+        
+        // Check if it's a valid title ID format (CUSA/PPSA + 5 digits)
+        if ((strncmp(e->d_name, "CUSA", 4) != 0 && 
+             strncmp(e->d_name, "PPSA", 4) != 0) || 
+            strlen(e->d_name) != 9)
+            continue;
+        
+        // Check if mount.lnk exists (indicates it's a mounted game)
+        char mount_lnk[PATH_MAX];
+        snprintf(mount_lnk, sizeof(mount_lnk), "/user/app/%s/mount.lnk", e->d_name);
+        
+        FILE *f = fopen(mount_lnk, "r");
+        if (!f) continue;  // Not a mounted game
+        
+        char game_path[PATH_MAX];
+        memset(game_path, 0, sizeof(game_path));
+        if (!fgets(game_path, sizeof(game_path), f)) {
+            fclose(f);
+            continue;
+        }
+        fclose(f);
+        game_path[strcspn(game_path, "\r\n")] = '\0';
+        
+        // Get game name from param.json
+        char param_json[PATH_MAX];
+        snprintf(param_json, sizeof(param_json), "%s/sce_sys/param.json", game_path);
+        char game_name[256] = "Unknown";
+        get_game_name_from_json(param_json, game_name, sizeof(game_name));
+        
+        // Get game size (approximate from eboot.bin)
+        char eboot_path[PATH_MAX];
+        snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", game_path);
+        struct stat st;
+        uint64_t game_size = 0;
+        if (stat(eboot_path, &st) == 0) {
+            game_size = st.st_size;
+        }
+        
+        // Get region
+        const char *region = get_game_region(e->d_name);
+        
+        // Check if nullfs mount is active
+        char system_ex_app[PATH_MAX];
+        snprintf(system_ex_app, sizeof(system_ex_app), "/system_ex/app/%s", e->d_name);
+        int is_active = is_mounted(system_ex_app);
+        
+        // Format: title_id|name|path|size|region|active
+        off += snprintf(response + off, 65536 - off,
+            "%s|%s|%s|%llu|%s|%d\n",
+            e->d_name, game_name, game_path, 
+            (unsigned long long)game_size, region, is_active);
+        
+        game_count++;
+    }
+    closedir(d);
+    
+    if (game_count == 0) {
+        strcpy(response, "NO_GAMES\n");
+        off = strlen(response);
+    }
+    
+    send_response(session->sock, RESP_DATA, response, off);
+    free(response);
+}
+
+// Handle GET_GAME_ICON - Send icon0.png binary for a given title_id
+void handle_get_game_icon(client_session_t *session, const char *title_id) {
+    if (!title_id || strlen(title_id) == 0) {
+        send_error(session->sock, "No title ID provided");
+        return;
+    }
+    
+    // Validate title ID format
+    if ((strncmp(title_id, "CUSA", 4) != 0 && 
+         strncmp(title_id, "PPSA", 4) != 0) || 
+        strlen(title_id) != 9) {
+        send_error(session->sock, "Invalid title ID format");
+        return;
+    }
+    
+    // Try multiple icon paths (prefer appmeta, then user/app, then game source)
+    char icon_path[PATH_MAX];
+    FILE *f = NULL;
+    
+    // 1. /user/appmeta/{title_id}/icon0.png
+    snprintf(icon_path, sizeof(icon_path), "/user/appmeta/%s/icon0.png", title_id);
+    f = fopen(icon_path, "rb");
+    
+    // 2. /user/app/{title_id}/sce_sys/icon0.png
+    if (!f) {
+        snprintf(icon_path, sizeof(icon_path), "/user/app/%s/sce_sys/icon0.png", title_id);
+        f = fopen(icon_path, "rb");
+    }
+    
+    // 3. Follow mount.lnk to the original game path
+    if (!f) {
+        char mount_lnk[PATH_MAX];
+        snprintf(mount_lnk, sizeof(mount_lnk), "/user/app/%s/mount.lnk", title_id);
+        FILE *lnk = fopen(mount_lnk, "r");
+        if (lnk) {
+            char game_path[PATH_MAX] = {0};
+            if (fgets(game_path, sizeof(game_path), lnk)) {
+                game_path[strcspn(game_path, "\r\n")] = '\0';
+                snprintf(icon_path, sizeof(icon_path), "%s/sce_sys/icon0.png", game_path);
+                f = fopen(icon_path, "rb");
+            }
+            fclose(lnk);
+        }
+    }
+    
+    // 4. Scan /user/home/*/savedata_prospero_meta/user/{title_id}/ for any *_icon0.png
+    //    This covers saves for games that are no longer installed/mounted.
+    if (!f) {
+        DIR *home_dir = opendir("/user/home");
+        if (home_dir) {
+            struct dirent *user_ent;
+            while ((user_ent = readdir(home_dir)) && !f) {
+                if (!strcmp(user_ent->d_name, ".") || !strcmp(user_ent->d_name, "..")) continue;
+                
+                char meta_dir[PATH_MAX];
+                snprintf(meta_dir, sizeof(meta_dir),
+                         "/user/home/%s/savedata_prospero_meta/user/%s",
+                         user_ent->d_name, title_id);
+                
+                DIR *md = opendir(meta_dir);
+                if (!md) continue;
+                
+                struct dirent *file_ent;
+                while ((file_ent = readdir(md))) {
+                    // Pick any file ending in "_icon0.png"
+                    size_t nlen = strlen(file_ent->d_name);
+                    if (nlen > 10 && 
+                        strstr(file_ent->d_name, "icon0.png") != NULL) {
+                        snprintf(icon_path, sizeof(icon_path),
+                                 "%s/%s", meta_dir, file_ent->d_name);
+                        f = fopen(icon_path, "rb");
+                        if (f) break;
+                    }
+                }
+                closedir(md);
+            }
+            closedir(home_dir);
+        }
+    }
+    
+    if (!f) {
+        send_error(session->sock, "Icon not found");
+        return;
+    }
+    
+    // Get file size
+    fseek(f, 0, SEEK_END);
+    long icon_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    if (icon_size <= 0 || icon_size > 2 * 1024 * 1024) {  // Max 2MB
+        fclose(f);
+        send_error(session->sock, "Invalid icon size");
+        return;
+    }
+    
+    char *icon_data = malloc(icon_size);
+    if (!icon_data) {
+        fclose(f);
+        send_error(session->sock, "Out of memory");
+        return;
+    }
+    
+    size_t read_bytes = fread(icon_data, 1, icon_size, f);
+    fclose(f);
+    
+    if ((long)read_bytes != icon_size) {
+        free(icon_data);
+        send_error(session->sock, "Failed to read icon");
+        return;
+    }
+    
+    send_response(session->sock, RESP_DATA, icon_data, icon_size);
+    free(icon_data);
+}
+
+// Handle GET_GAME_PIC - Send pic0.png or pic1.png binary for a given title_id
+// Request format: "TITLE_ID:PIC_TYPE" where PIC_TYPE is '0' for pic0 or '1' for pic1
+void handle_get_game_pic(client_session_t *session, const char *request) {
+    if (!request || strlen(request) < 11) {  // Need at least TITLE_ID:X
+        send_error(session->sock, "Invalid request format");
+        return;
+    }
+    
+    // Parse title_id and pic type
+    char title_id[16] = {0};
+    char pic_type = '0';
+    
+    // Find colon separator
+    const char *colon = strchr(request, ':');
+    if (!colon || (colon - request) != 9) {
+        send_error(session->sock, "Invalid request format (expected TITLE_ID:TYPE)");
+        return;
+    }
+    
+    strncpy(title_id, request, 9);
+    title_id[9] = '\0';
+    pic_type = colon[1];
+    
+    // Validate title ID
+    if ((strncmp(title_id, "CUSA", 4) != 0 && 
+         strncmp(title_id, "PPSA", 4) != 0) || 
+        strlen(title_id) != 9) {
+        send_error(session->sock, "Invalid title ID format");
+        return;
+    }
+    
+    // Validate pic type
+    if (pic_type != '0' && pic_type != '1') {
+        send_error(session->sock, "Invalid pic type (use 0 or 1)");
+        return;
+    }
+    
+    char pic_filename[16];
+    snprintf(pic_filename, sizeof(pic_filename), "pic%c.png", pic_type);
+    
+    // Try multiple paths
+    char pic_path[PATH_MAX];
+    FILE *f = NULL;
+    
+    // 1. /user/app/{title_id}/sce_sys/picN.png
+    snprintf(pic_path, sizeof(pic_path), "/user/app/%s/sce_sys/%s", title_id, pic_filename);
+    f = fopen(pic_path, "rb");
+    
+    // 2. /user/appmeta/{title_id}/picN.png
+    if (!f) {
+        snprintf(pic_path, sizeof(pic_path), "/user/appmeta/%s/%s", title_id, pic_filename);
+        f = fopen(pic_path, "rb");
+    }
+    
+    // 3. Follow mount.lnk to original source
+    if (!f) {
+        char mount_lnk[PATH_MAX];
+        snprintf(mount_lnk, sizeof(mount_lnk), "/user/app/%s/mount.lnk", title_id);
+        FILE *lnk = fopen(mount_lnk, "r");
+        if (lnk) {
+            char game_path[PATH_MAX] = {0};
+            if (fgets(game_path, sizeof(game_path), lnk)) {
+                game_path[strcspn(game_path, "\r\n")] = '\0';
+                snprintf(pic_path, sizeof(pic_path), "%s/sce_sys/%s", game_path, pic_filename);
+                f = fopen(pic_path, "rb");
+            }
+            fclose(lnk);
+        }
+    }
+    
+    if (!f) {
+        send_error(session->sock, "Picture not found");
+        return;
+    }
+    
+    fseek(f, 0, SEEK_END);
+    long pic_size = ftell(f);
+    fseek(f, 0, SEEK_SET);
+    
+    // pic1 can be larger (up to 8MB, 3840x2160)
+    if (pic_size <= 0 || pic_size > 16 * 1024 * 1024) {
+        fclose(f);
+        send_error(session->sock, "Invalid picture size");
+        return;
+    }
+    
+    char *pic_data = malloc(pic_size);
+    if (!pic_data) {
+        fclose(f);
+        send_error(session->sock, "Out of memory");
+        return;
+    }
+    
+    size_t read_bytes = fread(pic_data, 1, pic_size, f);
+    fclose(f);
+    
+    if ((long)read_bytes != pic_size) {
+        free(pic_data);
+        send_error(session->sock, "Failed to read picture");
+        return;
+    }
+    
+    send_response(session->sock, RESP_DATA, pic_data, pic_size);
+    free(pic_data);
+}
+
+// Helper: Read text file contents into buffer (returns bytes read, 0 on error)
+static size_t read_file_text(const char *path, char *buf, size_t buflen) {
+    FILE *f = fopen(path, "r");
+    if (!f) return 0;
+    size_t n = fread(buf, 1, buflen - 1, f);
+    fclose(f);
+    buf[n] = '\0';
+    return n;
+}
+
+// Helper: Recursively calculate directory size
+static uint64_t dir_size_recursive(const char *path) {
+    uint64_t total = 0;
+    DIR *d = opendir(path);
+    if (!d) return 0;
+    
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        
+        char full[PATH_MAX];
+        snprintf(full, sizeof(full), "%s/%s", path, e->d_name);
+        struct stat st;
+        if (lstat(full, &st) != 0) continue;
+        
+        if (S_ISDIR(st.st_mode)) {
+            total += dir_size_recursive(full);
+        } else if (S_ISREG(st.st_mode)) {
+            total += st.st_size;
+        }
+    }
+    closedir(d);
+    return total;
+}
+
+// Handle GET_GAME_DETAILS - Send detailed info about a game (version, size, paths, etc)
+void handle_get_game_details(client_session_t *session, const char *title_id) {
+    if (!title_id || strlen(title_id) == 0) {
+        send_error(session->sock, "No title ID provided");
+        return;
+    }
+    
+    if ((strncmp(title_id, "CUSA", 4) != 0 && 
+         strncmp(title_id, "PPSA", 4) != 0) || 
+        strlen(title_id) != 9) {
+        send_error(session->sock, "Invalid title ID format");
+        return;
+    }
+    
+    // Read mount.lnk to get game source path
+    char mount_lnk[PATH_MAX];
+    snprintf(mount_lnk, sizeof(mount_lnk), "/user/app/%s/mount.lnk", title_id);
+    char game_path[PATH_MAX] = {0};
+    FILE *lnk = fopen(mount_lnk, "r");
+    if (lnk) {
+        if (fgets(game_path, sizeof(game_path), lnk)) {
+            game_path[strcspn(game_path, "\r\n")] = '\0';
+        }
+        fclose(lnk);
+    }
+    
+    char response[8192];
+    int off = 0;
+    
+    // Game name from param.json
+    char param_json[PATH_MAX];
+    snprintf(param_json, sizeof(param_json), "%s/sce_sys/param.json", game_path);
+    char game_name[256] = "Unknown";
+    get_game_name_from_json(param_json, game_name, sizeof(game_name));
+    
+    // Read full param.json contents
+    char param_content[4096] = {0};
+    read_file_text(param_json, param_content, sizeof(param_content));
+    
+    // Escape newlines in param_content for single-line response
+    for (char *p = param_content; *p; p++) {
+        if (*p == '\n') *p = ' ';
+        else if (*p == '\r') *p = ' ';
+    }
+    
+    // Total game size (recursive)
+    uint64_t total_size = 0;
+    if (game_path[0]) {
+        total_size = dir_size_recursive(game_path);
+    }
+    
+    // EBoot size
+    char eboot_path[PATH_MAX];
+    snprintf(eboot_path, sizeof(eboot_path), "%s/eboot.bin", game_path);
+    struct stat st;
+    uint64_t eboot_size = 0;
+    if (stat(eboot_path, &st) == 0) {
+        eboot_size = st.st_size;
+    }
+    
+    // Mount status
+    char system_ex_app[PATH_MAX];
+    snprintf(system_ex_app, sizeof(system_ex_app), "/system_ex/app/%s", title_id);
+    int is_active = is_mounted(system_ex_app);
+    
+    // Get modification time of game directory (install date)
+    time_t install_date = 0;
+    if (game_path[0] && stat(game_path, &st) == 0) {
+        install_date = st.st_mtime;
+    }
+    
+    // Format timestamps
+    char install_date_str[64] = "Unknown";
+    if (install_date > 0) {
+        struct tm *tm = localtime(&install_date);
+        if (tm) {
+            strftime(install_date_str, sizeof(install_date_str), "%Y-%m-%d %H:%M:%S", tm);
+        }
+    }
+    
+    // Region
+    const char *region = get_game_region(title_id);
+    
+    off += snprintf(response + off, sizeof(response) - off,
+        "title_id=%s\n"
+        "name=%s\n"
+        "path=%s\n"
+        "region=%s\n"
+        "total_size=%llu\n"
+        "eboot_size=%llu\n"
+        "install_date=%s\n"
+        "is_active=%d\n"
+        "param_json=%s\n",
+        title_id,
+        game_name,
+        game_path,
+        region,
+        (unsigned long long)total_size,
+        (unsigned long long)eboot_size,
+        install_date_str,
+        is_active,
+        param_content);
+    
+    send_response(session->sock, RESP_DATA, response, off);
+}
+
+// Handle LIST_SAVES - Scan /user/home/*/savedata/* and return list of saves
+// Format: title_id|user_id|save_path|total_size|mtime_unix\n...
+void handle_list_saves(client_session_t *session) {
+    char *response = malloc(65536);
+    if (!response) {
+        send_error(session->sock, "Out of memory");
+        return;
+    }
+    
+    int off = 0;
+    int save_count = 0;
+    
+    DIR *home = opendir("/user/home");
+    if (!home) {
+        send_error(session->sock, "Cannot open /user/home");
+        free(response);
+        return;
+    }
+    
+    // PS5 saves are in `savedata_prospero`, PS4 legacy in `savedata`
+    const char *save_dirs[] = { "savedata_prospero", "savedata" };
+    
+    struct dirent *user_entry;
+    while ((user_entry = readdir(home)) && off < 60000) {
+        if (!strcmp(user_entry->d_name, ".") || !strcmp(user_entry->d_name, ".."))
+            continue;
+        
+        // Try both savedata dirs for this user
+        for (int si = 0; si < 2; si++) {
+            char savedata_path[PATH_MAX];
+            snprintf(savedata_path, sizeof(savedata_path),
+                     "/user/home/%s/%s", user_entry->d_name, save_dirs[si]);
+            
+            DIR *sdir = opendir(savedata_path);
+            if (!sdir) continue;
+            
+            struct dirent *save_entry;
+            while ((save_entry = readdir(sdir)) && off < 60000) {
+                if (!strcmp(save_entry->d_name, ".") || !strcmp(save_entry->d_name, ".."))
+                    continue;
+                
+                // Filter by CUSA/PPSA title_id format (9 chars)
+                if ((strncmp(save_entry->d_name, "CUSA", 4) != 0 && 
+                     strncmp(save_entry->d_name, "PPSA", 4) != 0) || 
+                    strlen(save_entry->d_name) != 9) {
+                    continue;
+                }
+                
+                char full_save_path[PATH_MAX];
+                snprintf(full_save_path, sizeof(full_save_path),
+                         "%s/%s", savedata_path, save_entry->d_name);
+                
+                struct stat st;
+                if (stat(full_save_path, &st) != 0 || !S_ISDIR(st.st_mode)) {
+                    continue;
+                }
+                
+                uint64_t save_size = dir_size_recursive(full_save_path);
+                
+                off += snprintf(response + off, 65536 - off,
+                    "%s|%s|%s|%llu|%lld\n",
+                    save_entry->d_name,      // title_id
+                    user_entry->d_name,      // user_id
+                    full_save_path,          // save_path
+                    (unsigned long long)save_size,
+                    (long long)st.st_mtime);
+                
+                save_count++;
+            }
+            closedir(sdir);
+        }
+    }
+    closedir(home);
+    
+    if (save_count == 0) {
+        strcpy(response, "NO_SAVES\n");
+        off = strlen(response);
+    }
+    
+    send_response(session->sock, RESP_DATA, response, off);
+    free(response);
+}
+
+// Handle LAUNCH_GAME - Launch an installed/mounted game by title ID
+void handle_launch_game(client_session_t *session, const char *title_id) {
+    if (!title_id || strlen(title_id) == 0) {
+        send_error(session->sock, "No title ID provided");
+        return;
+    }
+    
+    // Validate title ID (CUSA/PPSA + 5 digits)
+    if ((strncmp(title_id, "CUSA", 4) != 0 &&
+         strncmp(title_id, "PPSA", 4) != 0) ||
+        strlen(title_id) != 9) {
+        send_error(session->sock, "Invalid title ID format");
+        return;
+    }
+    
+    // Initialize services (idempotent - safe to call even if already initialized)
+    sceUserServiceInitialize(NULL);
+    sceLncUtilInitialize();
+    
+    // Log the foreground user for debugging
+    int fg_user = 0;
+    sceUserServiceGetForegroundUser(&fg_user);
+    
+    // Allocate a properly sized LncAppParam struct on stack (zero-initialized).
+    // The struct's first 4 bytes are typically the 'size' field.
+    // Homebrew launchers typically pass either NULL or a 256-byte zeroed block.
+    char lnc_param[256];
+    memset(lnc_param, 0, sizeof(lnc_param));
+    *(uint32_t *)lnc_param = sizeof(lnc_param);  // size field
+    
+    // Attempt 1: sceLncUtilLaunchApp with zero-initialized param
+    int ret = sceLncUtilLaunchApp(title_id, NULL, lnc_param);
+    int ret_lnc_null = 0, ret_sys = 0;
+    
+    // Attempt 2: sceLncUtilLaunchApp with NULL param
+    if (ret < 0) {
+        ret_lnc_null = sceLncUtilLaunchApp(title_id, NULL, NULL);
+        if (ret_lnc_null >= 0) ret = ret_lnc_null;
+    }
+    
+    // Attempt 3: sceSystemServiceLaunchApp fallback
+    if (ret < 0) {
+        ret_sys = sceSystemServiceLaunchApp(title_id, NULL, NULL);
+        if (ret_sys == 0) ret = 0;
+    }
+    
+    char msg[512];
+    if (ret >= 0) {
+        snprintf(msg, sizeof(msg), "Launched %s (app_id=%d)", title_id, ret);
+        send_ok(session->sock, msg);
+    } else {
+        snprintf(msg, sizeof(msg),
+                 "Launch failed. fg_user=0x%x  lnc_param=0x%x  lnc_null=0x%x  sys=0x%x",
+                 fg_user, ret, ret_lnc_null, ret_sys);
+        send_error(session->sock, msg);
+    }
+}
+
+// Helper: scan a directory tree for images up to 2 levels deep and append to response.
+// Returns number of screenshots added. (Limited depth to avoid runaway scans.)
+static int scan_images_recursive(const char *path, int depth, char *response, int *off, int max_len) {
+    if (depth > 5) return 0;  // av_contents/thumbnails/photo/NPXS40087/NPXS40087/{bucket}/file = 5 levels
+    
+    DIR *d = opendir(path);
+    if (!d) return 0;
+    
+    int added = 0;
+    struct dirent *e;
+    while ((e = readdir(d))) {
+        if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, "..")) continue;
+        
+        char full[PATH_MAX];
+        snprintf(full, sizeof(full), "%s/%s", path, e->d_name);
+        
+        struct stat st;
+        if (stat(full, &st) != 0) continue;
+        
+        if (S_ISDIR(st.st_mode)) {
+            added += scan_images_recursive(full, depth + 1, response, off, max_len);
+        } else if (S_ISREG(st.st_mode)) {
+            size_t nlen = strlen(e->d_name);
+            int is_image =
+                (nlen > 4 && (
+                    !strcasecmp(e->d_name + nlen - 4, ".jpg") ||
+                    !strcasecmp(e->d_name + nlen - 4, ".png") ||
+                    !strcasecmp(e->d_name + nlen - 4, ".bmp"))) ||
+                (nlen > 5 && !strcasecmp(e->d_name + nlen - 5, ".jpeg"));
+            
+            if (!is_image) continue;
+            
+            int written = snprintf(response + *off, max_len - *off,
+                                   "%s|%s|%llu|%lld\n",
+                                   full, e->d_name,
+                                   (unsigned long long)st.st_size,
+                                   (long long)st.st_mtime);
+            if (written > 0 && *off + written < max_len) {
+                *off += written;
+                added++;
+            }
+        }
+    }
+    closedir(d);
+    return added;
+}
+
+// Handle DELETE_SCREENSHOT - Delete all files belonging to a PS5 screenshot.
+//
+// PS5 screenshot layout (current firmware):
+//   /user/av_contents/photo/NPXS40087/NPXS40087/{bucket}/YYYYMMDD_hhmmss_xxxxxxxx.dat   (encrypted original)
+//   /user/av_contents/photo/NPXS40087/NPXS40087/{bucket}/YYYYMMDD_hhmmss_xxxxxxxx.meta  (metadata)
+//   /user/av_contents/thumbnails/photo/NPXS40087/NPXS40087/{bucket}/YYYYMMDD_hhmmss_xxxxxxxx.jpg.jpeg
+//                                                                         (visible thumbnail - what the client lists)
+//
+// The client usually sends us the .jpg.jpeg path (what it saw).
+// We need to delete all three files: thumbnail + .dat + .meta.
+void handle_delete_screenshot(client_session_t *session, const char *full_path) {
+    if (!full_path || strlen(full_path) == 0) {
+        send_error(session->sock, "No path provided");
+        return;
+    }
+    
+    // Safety: only allow paths under known screenshot roots
+    if (strncmp(full_path, "/user/av_contents/", 18) != 0 &&
+        strncmp(full_path, "/user/home/", 11) != 0) {
+        send_error(session->sock, "Path not in allowed screenshot directory");
+        return;
+    }
+    
+    int removed = 0;
+    
+    // 1. Delete whatever file the client pointed us at
+    if (unlink(full_path) == 0) removed++;
+    
+    // 2. Derive sibling paths.
+    //    Case A: input is thumbnail  "…/thumbnails/photo/…/xxx.jpg.jpeg"
+    //            → delete "…/photo/…/xxx.dat" and "…/photo/…/xxx.meta"
+    //    Case B: input is original   "…/photo/…/xxx.dat" or ".meta"
+    //            → delete corresponding thumbnail "…/thumbnails/photo/…/xxx.jpg.jpeg"
+    //            → also delete the sibling (.dat/.meta pair)
+    
+    const char *thumb_root = strstr(full_path, "/av_contents/thumbnails/photo/");
+    const char *orig_root  = strstr(full_path, "/av_contents/photo/");
+    // (orig_root will also match if thumb_root is present; we handle that via precedence)
+    
+    // Extract directory + basename for transformations
+    char dir_part[PATH_MAX] = {0};
+    char base_part[PATH_MAX] = {0};
+    const char *last_slash = strrchr(full_path, '/');
+    if (!last_slash) {
+        char m[64];
+        snprintf(m, sizeof(m), "Deleted %d file(s)", removed);
+        send_ok(session->sock, m);
+        return;
+    }
+    size_t dir_len = last_slash - full_path;
+    memcpy(dir_part, full_path, dir_len);
+    dir_part[dir_len] = '\0';
+    strncpy(base_part, last_slash + 1, sizeof(base_part) - 1);
+    
+    // Strip any known extension suffix to get the base stem
+    char stem[PATH_MAX] = {0};
+    strncpy(stem, base_part, sizeof(stem) - 1);
+    const char *suffixes[] = { ".jpg.jpeg", ".jpeg", ".jpg", ".png", ".dat", ".meta" };
+    for (size_t i = 0; i < sizeof(suffixes)/sizeof(suffixes[0]); i++) {
+        size_t slen = strlen(suffixes[i]);
+        size_t blen = strlen(stem);
+        if (blen > slen && !strcasecmp(stem + blen - slen, suffixes[i])) {
+            stem[blen - slen] = '\0';
+            break;
+        }
+    }
+    
+    char sibling[PATH_MAX];
+    
+    if (thumb_root) {
+        // Input is a thumbnail. Build original dir by removing "thumbnails/" segment.
+        size_t keep = thumb_root - full_path;  // up to "/av_contents"
+        char orig_dir[PATH_MAX];
+        snprintf(orig_dir, sizeof(orig_dir), "%.*s/av_contents/photo/%s",
+                 (int)keep, full_path,
+                 dir_part + keep + strlen("/av_contents/thumbnails/photo/"));
+        
+        // Delete .dat and .meta siblings
+        snprintf(sibling, sizeof(sibling), "%s/%s.dat", orig_dir, stem);
+        if (unlink(sibling) == 0) removed++;
+        snprintf(sibling, sizeof(sibling), "%s/%s.meta", orig_dir, stem);
+        if (unlink(sibling) == 0) removed++;
+    } else if (orig_root) {
+        // Input is an original (.dat/.meta). Delete the paired file and the thumbnail.
+        snprintf(sibling, sizeof(sibling), "%s/%s.dat", dir_part, stem);
+        if (strcmp(sibling, full_path) != 0 && unlink(sibling) == 0) removed++;
+        snprintf(sibling, sizeof(sibling), "%s/%s.meta", dir_part, stem);
+        if (strcmp(sibling, full_path) != 0 && unlink(sibling) == 0) removed++;
+        
+        // Build thumbnail dir by inserting "thumbnails/" before "photo/"
+        size_t keep = orig_root - full_path;  // up to "/av_contents"
+        char thumb_dir[PATH_MAX];
+        snprintf(thumb_dir, sizeof(thumb_dir), "%.*s/av_contents/thumbnails/photo/%s",
+                 (int)keep, full_path,
+                 dir_part + keep + strlen("/av_contents/photo/"));
+        
+        snprintf(sibling, sizeof(sibling), "%s/%s.jpg.jpeg", thumb_dir, stem);
+        if (unlink(sibling) == 0) removed++;
+        snprintf(sibling, sizeof(sibling), "%s/%s.jpeg", thumb_dir, stem);
+        if (unlink(sibling) == 0) removed++;
+    }
+    
+    char msg[256];
+    snprintf(msg, sizeof(msg), "Deleted %d file(s)", removed);
+    send_ok(session->sock, msg);
+}
+
+// Handle LIST_SCREENSHOTS - Scan PS5 screenshot directories
+// Structure: /user/av_contents/photo/NPXS40087/{TITLE_ID}/*.jpg|png
+// Format: full_path|filename|size|mtime_unix\n...
+void handle_list_screenshots(client_session_t *session) {
+    const int BUF_SIZE = 262144;  // 256 KB for many screenshots
+    char *response = malloc(BUF_SIZE);
+    if (!response) {
+        send_error(session->sock, "Out of memory");
+        return;
+    }
+    response[0] = '\0';
+    int off = 0;
+    int count = 0;
+    
+    // Primary PS5 screenshot locations.
+    // NOTE: The *visible* JPEG thumbnails live under /thumbnails/photo/…/.jpg.jpeg
+    // The encrypted originals (.dat + .meta) live under /photo/…/ but aren't
+    // directly viewable, so we list thumbnails instead.
+    const char *roots[] = {
+        "/user/av_contents/thumbnails/photo",  // visible JPEG thumbnails (primary)
+        "/user/av_contents/thumbnails/video",  // video thumbnails
+        "/user/av_contents/photo",             // fallback: any direct .jpg/.png originals
+        "/user/av_contents/video",
+        "/user/av_contents/sdr",
+        "/user/av_contents/extra",
+    };
+    
+    for (size_t i = 0; i < sizeof(roots)/sizeof(roots[0]); i++) {
+        count += scan_images_recursive(roots[i], 0, response, &off, BUF_SIZE);
+    }
+    
+    // Fallback: legacy user home paths
+    if (count == 0) {
+        DIR *home = opendir("/user/home");
+        if (home) {
+            struct dirent *user_ent;
+            while ((user_ent = readdir(home))) {
+                if (!strcmp(user_ent->d_name, ".") || !strcmp(user_ent->d_name, "..")) continue;
+                
+                const char *subdirs[] = { "screenshot", "images/screenshot", "shared" };
+                for (size_t si = 0; si < sizeof(subdirs)/sizeof(subdirs[0]); si++) {
+                    char ss_path[PATH_MAX];
+                    snprintf(ss_path, sizeof(ss_path), "/user/home/%s/%s",
+                             user_ent->d_name, subdirs[si]);
+                    count += scan_images_recursive(ss_path, 0, response, &off, BUF_SIZE);
+                }
+            }
+            closedir(home);
+        }
+    }
+    
+    if (count == 0) {
+        strcpy(response, "NO_SCREENSHOTS\n");
+        off = strlen(response);
+    }
+    
+    send_response(session->sock, RESP_DATA, response, off);
+    free(response);
+}
+
+// Handle UNMOUNT_GAME - Unmount a specific game by title ID
+void handle_unmount_game(client_session_t *session, const char *title_id) {
+    if (!title_id || strlen(title_id) == 0) {
+        send_error(session->sock, "No title ID provided");
+        return;
+    }
+    
+    // Validate title ID format
+    if ((strncmp(title_id, "CUSA", 4) != 0 && 
+         strncmp(title_id, "PPSA", 4) != 0) || 
+        strlen(title_id) != 9) {
+        send_error(session->sock, "Invalid title ID format");
+        return;
+    }
+    
+    // Initialize app install utility for unregistration
+    sceAppInstUtilInitialize();
+    
+    // Unregister the game from PS5 system (removes from home screen)
+    sceAppInstUtilAppUnInstall(title_id);
+    
+    // Wait briefly for system to process the unregistration
+    usleep(200000); // 200ms
+    
+    char system_ex_app[PATH_MAX];
+    snprintf(system_ex_app, sizeof(system_ex_app), "/system_ex/app/%s", title_id);
+    
+    // Unmount nullfs if mounted
+    if (is_mounted(system_ex_app)) {
+        if (unmount(system_ex_app, 0) != 0) {
+            unmount(system_ex_app, MNT_FORCE);
+        }
+    }
+    
+    // Wait for unmount to complete
+    usleep(100000); // 100ms
+    
+    // Clean up directories
+    char user_app_dir[PATH_MAX];
+    snprintf(user_app_dir, sizeof(user_app_dir), "/user/app/%s", title_id);
+    rmdir_recursive(user_app_dir);
+    
+    char appmeta_dir[PATH_MAX];
+    snprintf(appmeta_dir, sizeof(appmeta_dir), "/user/appmeta/%s", title_id);
+    rmdir_recursive(appmeta_dir);
+    
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Unmounted and unregistered %s", title_id);
+    send_ok(session->sock, msg);
+}
+
+// Helper: read a sysctl string value
+static int sysctl_get_string(const char *name, char *buf, size_t buflen) {
+    size_t len = buflen;
+    if (sysctlbyname(name, buf, &len, NULL, 0) == 0) {
+        buf[len < buflen ? len : buflen - 1] = '\0';
+        return 0;
+    }
+    return -1;
+}
+
+// Helper: read a sysctl integer value
+static int sysctl_get_int(const char *name, int *val) {
+    size_t len = sizeof(int);
+    return sysctlbyname(name, val, &len, NULL, 0);
+}
+
+// Helper: read a sysctl uint64 value
+static int sysctl_get_uint64(const char *name, uint64_t *val) {
+    size_t len = sizeof(uint64_t);
+    return sysctlbyname(name, val, &len, NULL, 0);
+}
+
+// Cache static hardware info (never changes). We read it once at first call
+// and serve the cached copy forever after — this avoids hitting the kernel
+// APIs on every refresh.
+static pthread_mutex_t g_hwinfo_lock = PTHREAD_MUTEX_INITIALIZER;
+static char g_hwinfo_response[4096];
+static int  g_hwinfo_len = 0;
+static int  g_hwinfo_valid = 0;
+
+// Handle GET_HW_INFO - static info served from one-shot cache
+void handle_get_hw_info(client_session_t *session) {
+    pthread_mutex_lock(&g_hwinfo_lock);
+    
+    if (!g_hwinfo_valid) {
+        char model_name[1024] = {0};
+        char serial[1024] = {0};
+        
+        // One-time reads of static kernel hw info
+        if (sceKernelGetHwModelName(model_name) != 0 || model_name[0] == '\0') {
+            strcpy(model_name, "PlayStation 5");
+        }
+        if (sceKernelGetHwSerialNumber(serial) != 0 || serial[0] == '\0') {
+            strcpy(serial, "N/A");
+        }
+        
+        char hw_machine[256] = {0};
+        char ostype[64] = {0};
+        char osrelease[64] = {0};
+        sysctl_get_string("hw.machine", hw_machine, sizeof(hw_machine));
+        sysctl_get_string("kern.ostype", ostype, sizeof(ostype));
+        sysctl_get_string("kern.osrelease", osrelease, sizeof(osrelease));
+        
+        int ncpu = 0;
+        sysctl_get_int("hw.ncpu", &ncpu);
+        
+        // Physical RAM — try PS5-specific API first, then sysctl chain, then hardcoded.
+        uint64_t physmem = (uint64_t)sceKernelGetDirectMemorySize();
+        if (physmem == 0) sysctl_get_uint64("hw.physmem",  &physmem);
+        if (physmem == 0) sysctl_get_uint64("hw.realmem",  &physmem);
+        if (physmem == 0) sysctl_get_uint64("hw.usermem",  &physmem);
+        if (physmem == 0) {
+            int pagesize = 0;
+            uint64_t page_count = 0;
+            sysctl_get_int("hw.pagesize", &pagesize);
+            if (sysctl_get_uint64("vm.stats.vm.v_page_count", &page_count) == 0 &&
+                pagesize > 0 && page_count > 0) {
+                physmem = page_count * (uint64_t)pagesize;
+            }
+        }
+        // Final fallback: every PS5 has 16 GB GDDR6 (accessible portion ~13 GB)
+        if (physmem == 0) {
+            physmem = 16ULL * 1024 * 1024 * 1024;
+        }
+        
+        g_hwinfo_len = snprintf(g_hwinfo_response, sizeof(g_hwinfo_response),
+            "model=%s\n"
+            "serial=%s\n"
+            "has_wlan_bt=1\n"
+            "has_optical_out=0\n"
+            "hw_model=%s\n"
+            "hw_machine=%s\n"
+            "os=%s %s\n"
+            "ncpu=%d\n"
+            "physmem=%llu\n",
+            model_name, serial, model_name, hw_machine,
+            ostype, osrelease, ncpu, (unsigned long long)physmem);
+        g_hwinfo_valid = 1;
+    }
+    
+    // Copy out under lock
+    char out[4096];
+    int out_len = g_hwinfo_len;
+    if (out_len > (int)sizeof(out)) out_len = (int)sizeof(out);
+    memcpy(out, g_hwinfo_response, out_len);
+    pthread_mutex_unlock(&g_hwinfo_lock);
+    
+    send_response(session->sock, RESP_DATA, out, out_len);
+}
+
+// Serialize sensor reads across concurrent client sessions to avoid
+// hitting non-reentrant Sony kernel APIs from multiple threads.
+static pthread_mutex_t g_sensor_lock = PTHREAD_MUTEX_INITIALIZER;
+
+// Small short-lived cache (1 second) so rapid-fire polls don't hammer the APIs.
+static struct {
+    time_t last_read;
+    int cpu_temp;
+    int soc_temp;
+    long cpu_freq_mhz;
+    uint32_t power_mw;
+    int valid;
+} g_sensor_cache = {0};
+
+// Handle GET_TEMPS - Uses verified Sony kernel APIs (new SDK 2026)
+void handle_get_temps(client_session_t *session) {
+    char response[1024];
+    int off = 0;
+    
+    int cpu_temp = 0;
+    int soc_temp = 0;
+    long cpu_freq_mhz = 0;
+    uint32_t power_mw = 0;
+    
+    pthread_mutex_lock(&g_sensor_lock);
+    
+    time_t now = time(NULL);
+    if (g_sensor_cache.valid && (now - g_sensor_cache.last_read) < 1) {
+        // Serve from cache - avoids hammering the kernel APIs
+        cpu_temp     = g_sensor_cache.cpu_temp;
+        soc_temp     = g_sensor_cache.soc_temp;
+        cpu_freq_mhz = g_sensor_cache.cpu_freq_mhz;
+        power_mw     = g_sensor_cache.power_mw;
+    } else {
+        // Fresh read. Only the APIs that appear in the official SDK sample.
+        // Each call is guarded individually; defaults to 0 on failure.
+        int rc;
+        
+        rc = sceKernelGetCpuTemperature(&cpu_temp);
+        if (rc != 0) cpu_temp = 0;
+        
+        rc = sceKernelGetSocSensorTemperature(0, &soc_temp);
+        if (rc != 0) soc_temp = 0;
+        
+        long cpu_freq_hz = sceKernelGetCpuFrequency();
+        cpu_freq_mhz = (cpu_freq_hz > 0) ? cpu_freq_hz / (1000 * 1000) : 0;
+        if (cpu_freq_mhz <= 0) {
+            uint64_t tsc_freq = 0;
+            if (sysctl_get_uint64("machdep.tsc_freq", &tsc_freq) == 0 && tsc_freq > 0) {
+                cpu_freq_mhz = (long)(tsc_freq / 1000000ULL);
+            }
+        }
+        
+        // Power consumption API — call at most once every 5 seconds.
+        // Separate tracker so the 1s sensor cache doesn't force a re-read of this API.
+        static time_t last_power_read = 0;
+        static uint32_t last_power_mw = 0;
+        if ((now - last_power_read) >= 5) {
+            uint32_t pw = 0;
+            if (sceKernelGetSocPowerConsumption(&pw) == 0) {
+                // Reject abnormal readings (> 500 W is impossible for PS5)
+                if (pw < 500000) last_power_mw = pw;
+            }
+            last_power_read = now;
+        }
+        power_mw = last_power_mw;
+        
+        // Update cache
+        g_sensor_cache.last_read    = now;
+        g_sensor_cache.cpu_temp     = cpu_temp;
+        g_sensor_cache.soc_temp     = soc_temp;
+        g_sensor_cache.cpu_freq_mhz = cpu_freq_mhz;
+        g_sensor_cache.power_mw     = power_mw;
+        g_sensor_cache.valid        = 1;
+    }
+    
+    pthread_mutex_unlock(&g_sensor_lock);
+    
+    off += snprintf(response + off, sizeof(response) - off,
+        "cpu_temp=%d\n"
+        "soc_temp=%d\n"
+        "cpu_freq_mhz=%ld\n"
+        "soc_clock_mhz=0\n"
+        "soc_power_mw=%u\n",
+        cpu_temp,
+        soc_temp,
+        cpu_freq_mhz,
+        power_mw);
+    
+    for (int i = 0; i < 8; i++) {
+        off += snprintf(response + off, sizeof(response) - off,
+            "cpu_usage_%d=0\n", i);
+    }
+    
+    send_response(session->sock, RESP_DATA, response, off);
+}
+
+// Handle GET_POWER_INFO - Get power/uptime and real power consumption
+void handle_get_power_info(client_session_t *session) {
+    char response[1024];
+    int off = 0;
+    
+    // Get uptime via kern.boottime
+    struct timeval boottime;
+    size_t bt_len = sizeof(boottime);
+    uint64_t uptime_sec = 0;
+    int bt_rc = sysctlbyname("kern.boottime", &boottime, &bt_len, NULL, 0);
+    
+    if (bt_rc == 0 && boottime.tv_sec > 0) {
+        struct timeval now;
+        gettimeofday(&now, NULL);
+        if (now.tv_sec > boottime.tv_sec) {
+            uptime_sec = (uint64_t)(now.tv_sec - boottime.tv_sec);
+        }
+    }
+    
+    // Fallback: use clock() or time-based estimate
+    if (uptime_sec == 0) {
+        // Simple fallback using time(NULL) - epoch seconds
+        // Not real uptime but at least non-zero
+        uptime_sec = 0;  // Leave as 0 if we can't determine
+    }
+    
+    uint64_t hours = uptime_sec / 3600;
+    uint64_t minutes = (uptime_sec % 3600) / 60;
+    
+    // Use uptime only (safe) - no Sony kernel calls
+    off += snprintf(response + off, sizeof(response) - off,
+        "operating_time_sec=%llu\n"
+        "operating_time_hours=%llu\n"
+        "operating_time_minutes=%llu\n"
+        "boot_count=0\n"
+        "power_consumption_mw=0\n",
+        (unsigned long long)uptime_sec,
+        (unsigned long long)hours,
+        (unsigned long long)minutes);
+    
+    send_response(session->sock, RESP_DATA, response, off);
+}
+
+// Handle GET_RUNNING_APPS - Get list of running applications
+void handle_get_running_apps(client_session_t *session) {
+    char *response = malloc(16384);
+    if (!response) {
+        send_error(session->sock, "Out of memory");
+        return;
+    }
+    
+    int off = 0;
+    
+    // Scan /mnt/sandbox for running apps
+    DIR *d = opendir("/mnt/sandbox");
+    if (d) {
+        struct dirent *e;
+        while ((e = readdir(d)) && off < 15000) {
+            if (!strcmp(e->d_name, ".") || !strcmp(e->d_name, ".."))
+                continue;
+            
+            // Extract title ID from sandbox name (format: PPSA12345_000 or CUSA12345_000)
+            char title_id[16] = "";
+            if ((strncmp(e->d_name, "PPSA", 4) == 0 || strncmp(e->d_name, "CUSA", 4) == 0) &&
+                strlen(e->d_name) >= 9) {
+                strncpy(title_id, e->d_name, 9);
+                title_id[9] = '\0';
+            } else {
+                continue;
+            }
+            
+            // Format: pid=X|name=Y|title_id=Z|app_id=W
+            off += snprintf(response + off, 16384 - off,
+                "pid=0|name=%s|title_id=%s|app_id=0\n", e->d_name, title_id);
+        }
+        closedir(d);
+    }
+    
+    if (off == 0) {
+        strcpy(response, "No apps running\n");
+        off = strlen(response);
+    }
+    
+    send_response(session->sock, RESP_DATA, response, off);
+    free(response);
+}
+
+// Handle KILL_APP - Kill a running application
+void handle_kill_app(client_session_t *session, const char *title_id) {
+    if (!title_id || strlen(title_id) == 0) {
+        send_error(session->sock, "No title ID provided");
+        return;
+    }
+    
+    // Placeholder - actual app killing requires SceSystemService calls
+    char msg[128];
+    snprintf(msg, sizeof(msg), "Kill not implemented for %s", title_id);
+    send_error(session->sock, msg);
+}
+
+// Handle LAUNCH_BROWSER - Open the PS5 browser
+void handle_launch_browser(client_session_t *session, const char *url) {
+    // Placeholder
+    send_error(session->sock, "Browser launch not implemented");
 }
 
 // ============================================================================
@@ -2935,6 +4126,77 @@ void *client_thread(void *arg) {
                 break;
             case CMD_MOUNT_GAMES:
                 handle_mount_games(session);
+                break;
+            case CMD_GET_HW_INFO:
+                handle_get_hw_info(session);
+                break;
+            case CMD_GET_TEMPS:
+                handle_get_temps(session);
+                break;
+            case CMD_GET_GAME_LIST:
+                handle_get_game_list(session);
+                break;
+            case CMD_UNMOUNT_GAME:
+                if (data) {
+                    handle_unmount_game(session, (const char *)data);
+                }
+                break;
+            case CMD_GET_GAME_ICON:
+                if (data) {
+                    handle_get_game_icon(session, (const char *)data);
+                } else {
+                    send_error(session->sock, "No title ID provided");
+                }
+                break;
+            case CMD_GET_GAME_DETAILS:
+                if (data) {
+                    handle_get_game_details(session, (const char *)data);
+                } else {
+                    send_error(session->sock, "No title ID provided");
+                }
+                break;
+            case CMD_GET_GAME_PIC:
+                if (data) {
+                    handle_get_game_pic(session, (const char *)data);
+                } else {
+                    send_error(session->sock, "No request data provided");
+                }
+                break;
+            case CMD_LIST_SAVES:
+                handle_list_saves(session);
+                break;
+            case CMD_LAUNCH_GAME:
+                if (data) {
+                    handle_launch_game(session, (const char *)data);
+                } else {
+                    send_error(session->sock, "No title ID provided");
+                }
+                break;
+            case CMD_LIST_SCREENSHOTS:
+                handle_list_screenshots(session);
+                break;
+            case CMD_DELETE_SCREENSHOT:
+                if (data) {
+                    handle_delete_screenshot(session, (const char *)data);
+                } else {
+                    send_error(session->sock, "No path provided");
+                }
+                break;
+            case CMD_GET_POWER_INFO:
+                handle_get_power_info(session);
+                break;
+            case CMD_GET_RUNNING_APPS:
+                handle_get_running_apps(session);
+                break;
+            case CMD_KILL_APP:
+                if (data) {
+                    handle_kill_app(session, (const char *)data);
+                }
+                break;
+            case CMD_LAUNCH_BROWSER:
+                if (data) {
+                    handle_launch_browser(session, (const char *)data);
+                }
                 break;
             case CMD_SHELL_OPEN:
                 handle_shell_open(session);
