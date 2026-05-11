@@ -6,6 +6,8 @@
 
 Complete all-in-one PS5 management platform with **104+ MB/s** high-speed file transfers, live hardware monitoring, full game/save/screenshot management, and deep PS5 integration — now running natively on **Windows, Linux, macOS** (Intel & Apple Silicon) and **Android**.
 
+![PS5 Upload Suite v6.0 - Cross-Platform Desktop Client](screenshots/screenshot_v6.png)
+
 ---
 
 ⭐ **NEW in v6.0.0 (Cross-Platform Release):**
@@ -131,8 +133,6 @@ Complete all-in-one PS5 management platform with **104+ MB/s** high-speed file t
 - 🧹 **Auto-Cleanup** - Removes mount entries for deleted games
 
 📱 **Android Mobile Client available!**
-
-![PS5 Upload Suite v6.0 - Cross-Platform Desktop Client](screenshots/screenshot_v6.png)
 
 ---
 
