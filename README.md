@@ -132,8 +132,7 @@ Complete all-in-one PS5 management platform with **104+ MB/s** high-speed file t
 
 📱 **Android Mobile Client available!**
 
-![Transfer History & Multi-PS5 Support](screenshots/screenshot3.png)
-![Mobile App](screenshots/mobile_screenshot.jpg)
+![PS5 Upload Suite v6.0 - Cross-Platform Desktop Client](screenshots/screenshot_v6.png)
 
 ---
 
