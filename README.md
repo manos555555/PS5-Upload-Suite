@@ -2,13 +2,54 @@
 
 **By Manos**
 
-**Version 5.0.0 - Complete Management Suite**
+**Version 6.0.0 - Cross-Platform Release**
 
-Complete all-in-one PS5 management platform with **104+ MB/s** high-speed file transfers, live hardware monitoring, full game/save/screenshot management, and deep PS5 integration — all through a modern desktop client and a robust PS5 payload.
+Complete all-in-one PS5 management platform with **104+ MB/s** high-speed file transfers, live hardware monitoring, full game/save/screenshot management, and deep PS5 integration — now running natively on **Windows, Linux, macOS** (Intel & Apple Silicon) and **Android**.
 
 ---
 
-⭐ **NEW in v5.0.0 (Complete Management Suite):**
+⭐ **NEW in v6.0.0 (Cross-Platform Release):**
+
+### 🌍 Cross-Platform Support
+- **Windows x64**, **Linux x64**, **Linux ARM64**, **macOS Intel**, **macOS Apple Silicon**
+- **Android 5.0+** companion app (`.apk`) — manage your PS5 from your phone/tablet
+- Desktop builds are self-contained, single-file executables — no .NET runtime needed
+- Desktop client built on **Avalonia UI** (full XAML rewrite from WPF)
+- Mobile app built on **.NET MAUI**
+
+### 📥 Downloads
+| Platform | File |
+|---|---|
+| Windows 64-bit | `PS5UploadSuite-v6.0.0-Windows-x64.exe` |
+| Linux 64-bit | `PS5UploadSuite-v6.0.0-Linux-x64` |
+| Linux ARM64 (RPi etc.) | `PS5UploadSuite-v6.0.0-Linux-arm64` |
+| macOS Intel | `PS5UploadSuite-v6.0.0-macOS-x64` |
+| macOS Apple Silicon (M1+) | `PS5UploadSuite-v6.0.0-macOS-arm64` |
+| Android 5.0+ | `PS5UploadSuite-v6.0.0-Android.apk` |
+| PS5 Payload | `ps5_upload_server.elf` |
+
+➡️ **[Get the latest release here](https://github.com/manos555555/PS5-Upload-Suite/releases/latest)**
+
+### 🎨 Complete UI Rebuild
+- Modern, native-feeling UI on every platform
+- Faster startup and lower memory usage than the WPF version
+- Properly themed dark mode on every OS
+
+### 🐛 Major UI Fixes
+- ✅ Fixed Auto-send Payload Expander overlap
+- ✅ Fixed clipped tab toolbars (Screenshots, Saves, Games, Hardware)
+- ✅ Fixed ComboBox dropdowns being cut by parent panels
+- ✅ Fixed Transfer History expanders not stretching
+- ✅ Fixed Storage Info layout on narrow windows
+- ✅ App icon and header logo now properly displayed
+
+### 📦 Payload
+- Updated startup notification to **v6.0** (was incorrectly v3.0 in v5.0.0)
+- No protocol or behavioral changes — fully compatible with previous installs
+
+---
+
+⭐ **v5.0.0 Features (carried over):**
 
 ### 🖥️ **NEW: Hardware Monitor Tab**
 - 📋 **System Info** — Model (CFI-xxxx), Serial Number, Architecture, OS version
