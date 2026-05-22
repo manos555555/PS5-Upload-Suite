@@ -550,7 +550,6 @@ Created with ❤️ for the PS5 homebrew community
 
 - PS5 SDK
 - etaHEN
-- Inspired by ps5upload by PhantomPtr
 - PS5 homebrew community
 
 ---
